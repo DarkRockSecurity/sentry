@@ -35,6 +35,8 @@ const colors = {
   panelBorder: "#1E293B",
 };
 
+type Callout = { x: number; y: number };  // 0-100 percentages over the screenshot
+
 type Mod = {
   id: string;
   label: string;       // sidebar / card label
@@ -45,7 +47,18 @@ type Mod = {
   tagline: string;     // marketing subhead
   description: string; // 2-3 sentences of value prop
   highlights: string[];// 3-4 numbered callouts
+  callouts?: Callout[];// where to place the numbered badges on the screenshot
 };
+
+// Default 4-point callout layout — works for most module screenshots.
+// Modules with very different layouts (e.g. lots of left-rail content)
+// override below.
+const DEFAULT_CALLOUTS: Callout[] = [
+  { x: 22, y: 24 },
+  { x: 76, y: 26 },
+  { x: 30, y: 60 },
+  { x: 72, y: 78 },
+];
 
 const mods: Mod[] = [
   {
@@ -58,6 +71,12 @@ const mods: Mod[] = [
       "Zero-day alerts surface critical CVEs the moment your industry feed picks them up",
       "Industry threat pulse alongside the global feed, scoped to your sector",
       "Active-incident banner with one-click Commander — never lose the ball mid-event",
+    ],
+    callouts: [
+      { x: 26, y: 50 },   // 1: MTTD/Performance category metrics
+      { x: 26, y: 28 },   // 2: Active operations row top
+      { x: 80, y: 70 },   // 3: Threat Intelligence Pulse panel
+      { x: 50, y: 18 },   // 4: Active incident banner
     ],
   },
   {
@@ -95,6 +114,12 @@ const mods: Mod[] = [
       "Saved-assessment history with delta scoring shows real maturity progression",
       "Board-ready PDF export plus one-click email delivery to leadership",
     ],
+    callouts: [
+      { x: 40, y: 35 },   // 1: Function score breakdown
+      { x: 30, y: 60 },   // 2: CSF question / answer
+      { x: 75, y: 22 },   // 3: Score gauge / overall
+      { x: 75, y: 78 },   // 4: Export / Email Report button
+    ],
   },
   {
     id: "irplan", label: "IR Planner", note: "Plans & contacts", icon: Map, file: "irplan.png",
@@ -118,6 +143,12 @@ const mods: Mod[] = [
       "IOCs, affected users, assets, and regions captured in one structured view",
       "Attorney-Client privilege engaged with one toggle, propagated everywhere",
       "Auto-creates child tickets and tasks as the incident unfolds",
+    ],
+    callouts: [
+      { x: 50, y: 22 },   // 1: Severity / form area
+      { x: 50, y: 50 },   // 2: IOCs textarea
+      { x: 60, y: 70 },   // 3: Privilege checkboxes
+      { x: 35, y: 86 },   // 4: Activate Command button
     ],
   },
   {
@@ -214,6 +245,12 @@ const mods: Mod[] = [
       "Pre-populated Dark Rock IR partner card for instant retainer access",
       "Onboarding scorecard quantifies stakeholder coverage as a percentage",
       "Per-category descriptions explain why each role matters during IR",
+    ],
+    callouts: [
+      { x: 25, y: 40 },   // 1: Sub-nav with Internal/External/Vendors/Onboarding
+      { x: 36, y: 16 },   // 2: Counter pills
+      { x: 70, y: 30 },   // 3: First stakeholder group card
+      { x: 90, y: 18 },   // 4: Export Directory button
     ],
   },
   {
@@ -496,7 +533,7 @@ function Lightbox({ mod, onClose }: { mod: Mod; onClose: () => void }) {
         >
           {/* Screenshot */}
           <div style={{ background: "#080C12", padding: 24, display: "flex", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${colors.panelBorder}` }}>
-            <div style={{ width: "100%", borderRadius: 8, overflow: "hidden", border: `1px solid ${colors.panelBorder}`, background: "#0A0E14" }}>
+            <div style={{ width: "100%", borderRadius: 8, overflow: "hidden", border: `1px solid ${colors.panelBorder}`, background: "#0A0E14", position: "relative" }}>
               <div style={{ height: 24, padding: "0 10px", background: "#0A0E14", borderBottom: `1px solid ${colors.panelBorder}`, display: "flex", alignItems: "center", gap: 5 }}>
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#F56565" }} />
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ECC94B" }} />
@@ -505,12 +542,42 @@ function Lightbox({ mod, onClose }: { mod: Mod; onClose: () => void }) {
                   sentry / {mod.label.toLowerCase().replace(/\s+/g, "-")}
                 </span>
               </div>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/marketing/screenshots/${mod.file}`}
-                alt={mod.label}
-                style={{ display: "block", width: "100%", height: "auto", background: "#080C12" }}
-              />
+              <div style={{ position: "relative" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/marketing/screenshots/${mod.file}`}
+                  alt={mod.label}
+                  style={{ display: "block", width: "100%", height: "auto", background: "#080C12" }}
+                />
+                {(mod.callouts ?? DEFAULT_CALLOUTS).slice(0, mod.highlights.length).map((c, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      position: "absolute",
+                      left: `${c.x}%`,
+                      top: `${c.y}%`,
+                      transform: "translate(-50%, -50%)",
+                      width: 28,
+                      height: 28,
+                      borderRadius: "50%",
+                      background: "linear-gradient(135deg, #00B4A6, #009A8E)",
+                      color: "#0A0E14",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      fontFamily: "JetBrains Mono, monospace",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: "2px solid #0A0E14",
+                      boxShadow: "0 0 0 2px rgba(0, 180, 166, 0.55), 0 4px 14px rgba(0, 180, 166, 0.45)",
+                      pointerEvents: "none",
+                      zIndex: 2,
+                    }}
+                  >
+                    {i + 1}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
 
