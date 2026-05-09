@@ -45,14 +45,25 @@ export default async function AdminOverview() {
         </h1>
       </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 28 }}>
-        <Stat label="Tenants" value={tenants.length} accent={colors.teal} />
-        <Stat label="Active" value={active} accent={colors.green} />
-        <Stat label="Trial" value={trial} accent={colors.orange} />
-        <Stat label="Paused" value={paused} accent={colors.textDim} />
-        <Stat label="Paid plans" value={paidPlans} accent={colors.purple} />
-        <Stat label="Demo tenants" value={demo} accent={colors.tealLight} />
-        <Stat label="Total users" value={users} accent={colors.text} />
+      <div style={{ marginBottom: 28 }}>
+        <CategoryHeader label="Tenant Portfolio" sub="Volume + lifecycle state" accent={colors.teal} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
+          <Stat label="Tenants" value={tenants.length} accent={colors.teal} />
+          <Stat label="Active" value={active} accent={colors.green} />
+          <Stat label="Trial" value={trial} accent={colors.orange} />
+          <Stat label="Paused" value={paused} accent={colors.textDim} />
+        </div>
+
+        <CategoryHeader label="Commercial Mix" sub="Paid customers + active demos" accent={colors.purple} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
+          <Stat label="Paid plans" value={paidPlans} accent={colors.purple} />
+          <Stat label="Demo tenants" value={demo} accent={colors.tealLight} />
+        </div>
+
+        <CategoryHeader label="People" sub="Provisioned across all tenants" accent={colors.tealLight} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+          <Stat label="Total users" value={users} accent={colors.text} />
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 18 }}>
@@ -112,6 +123,31 @@ export default async function AdminOverview() {
         </Card>
       </div>
     </>
+  );
+}
+
+function CategoryHeader({ label, sub, accent }: { label: string; sub: string; accent: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 14px",
+        marginBottom: 10,
+        borderLeft: `3px solid ${accent}`,
+        background: accent + "0A",
+        borderRadius: "0 6px 6px 0",
+      }}
+    >
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}55`, flexShrink: 0 }} />
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ color: accent, fontSize: 11, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", fontFamily: "Figtree, sans-serif" }}>
+          {label}
+        </span>
+        <span style={{ color: colors.textMuted, fontSize: 11 }}>{sub}</span>
+      </div>
+    </div>
   );
 }
 

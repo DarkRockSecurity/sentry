@@ -62,7 +62,6 @@ export function Nav() {
           <a href="#capabilities" style={navLink}>Capabilities</a>
           <a href="#modules" style={navLink}>Modules</a>
           <a href="#how" style={navLink}>How it works</a>
-          <Link href="/docs" style={navLink}>Docs</Link>
           <Link
             href="/login"
             style={{

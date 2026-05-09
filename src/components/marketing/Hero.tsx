@@ -103,8 +103,8 @@ export function Hero() {
           >
             Sign in to Sentry →
           </Link>
-          <Link
-            href="/docs"
+          <a
+            href="mailto:contact@darkrocksecurity.com?subject=Sentry%20demo"
             style={{
               padding: "14px 26px",
               borderRadius: 10,
@@ -117,8 +117,8 @@ export function Hero() {
               fontFamily: "Figtree, sans-serif",
             }}
           >
-            Read the documentation
-          </Link>
+            Talk to us
+          </a>
         </div>
 
         <div
