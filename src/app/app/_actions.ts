@@ -67,7 +67,7 @@ interface LessonRow {
 // ─── loadTenantState ─────────────────────────────────────────────────
 export async function loadTenantState(): Promise<StateBlob | null> {
   const session = await requireUser();
-  const tenantId = session.user!.tenantId;
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
 
   const [
     stateRow, assessRows, stakeholderRows, keySystemRows, vendorRows,
@@ -216,7 +216,7 @@ export async function loadTenantState(): Promise<StateBlob | null> {
 // ─── saveTenantState ─────────────────────────────────────────────────
 export async function saveTenantState(data: StateBlob): Promise<{ ok: boolean }> {
   const session = await requireUser();
-  const tenantId = session.user!.tenantId;
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
 
   const slices = data as {
     assessments?: AssessmentRow[];
@@ -522,19 +522,69 @@ export async function getTenantContext(): Promise<{
   isDemoTenant: boolean;
   userRole: string;
   userEmail: string;
+  isImpersonating: boolean;
+  homeTenantId: string;
+  homeTenantName: string;
+  availableTenants: { id: string; name: string; slug: string; isDemoTenant: boolean }[];
 }> {
   const session = await requireUser();
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: session.user!.tenantId },
-    select: { id: true, name: true, isDemoTenant: true },
-  });
+  const homeTenantId = session.user!.tenantId;
+  const activeTenantId = session.activeTenantId ?? homeTenantId;
+
+  const [activeTenant, homeTenant] = await Promise.all([
+    prisma.tenant.findUnique({
+      where: { id: activeTenantId },
+      select: { id: true, name: true, isDemoTenant: true },
+    }),
+    activeTenantId === homeTenantId
+      ? null
+      : prisma.tenant.findUnique({ where: { id: homeTenantId }, select: { id: true, name: true } }),
+  ]);
+
+  // For super_admins: list every tenant they can jump into
+  let availableTenants: { id: string; name: string; slug: string; isDemoTenant: boolean }[] = [];
+  if (session.user!.role === "super_admin") {
+    availableTenants = await prisma.tenant.findMany({
+      orderBy: [{ isDemoTenant: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, slug: true, isDemoTenant: true },
+    });
+  }
+
   return {
-    tenantId: session.user!.tenantId,
-    tenantName: tenant?.name ?? "—",
-    isDemoTenant: tenant?.isDemoTenant ?? false,
+    tenantId: activeTenantId,
+    tenantName: activeTenant?.name ?? "—",
+    isDemoTenant: activeTenant?.isDemoTenant ?? false,
     userRole: session.user!.role,
     userEmail: session.email,
+    isImpersonating: session.isImpersonating,
+    homeTenantId,
+    homeTenantName: homeTenant?.name ?? activeTenant?.name ?? "—",
+    availableTenants,
   };
+}
+
+/** Switch the super_admin's active view tenant. Pass null to return home. */
+export async function setViewTenant(tenantId: string | null): Promise<{ ok: boolean; error?: string }> {
+  const session = await requireUser();
+  if (session.user!.role !== "super_admin") return { ok: false, error: "Forbidden" };
+
+  const cookieStore = await import("next/headers").then((m) => m.cookies()).then((c) => c);
+  const COOKIE = "sentry_view_tenant";
+  if (!tenantId || tenantId === session.user!.tenantId) {
+    cookieStore.delete(COOKIE);
+  } else {
+    const target = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+    if (!target) return { ok: false, error: "Tenant not found" };
+    cookieStore.set(COOKIE, tenantId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 8,
+    });
+  }
+  revalidatePath("/app");
+  return { ok: true };
 }
 
 // ─── Notification email send ────────────────────────────────────────
@@ -709,7 +759,7 @@ function escapeHtml(s: string): string {
 
 export async function clearTenantState(): Promise<{ ok: boolean }> {
   const session = await requireUser();
-  const tenantId = session.user!.tenantId;
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
   await Promise.all([
     prisma.tenantState.delete({ where: { tenantId } }).catch(() => {}),
     prisma.assessment.deleteMany({ where: { tenantId } }),

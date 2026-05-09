@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useStore } from "@/store";
 import { ThemeContext, darkColors, lightColors } from "@/lib/theme";
 import { Sidebar } from "./Sidebar";
+import { Topbar } from "./Topbar";
 import { AlertsBanner } from "@/components/ui/AlertsBanner";
 
 interface ShellProps {
@@ -33,7 +34,8 @@ export function Shell({ children }: ShellProps) {
         }}
       >
         <Sidebar />
-        <main style={{ flex: 1, padding: "20px 28px", maxWidth: 1040, overflow: "auto" }}>
+        <main style={{ flex: 1, padding: "0 28px 20px", maxWidth: 1040, overflow: "auto" }}>
+          <Topbar />
           <AlertsBanner />
           {children}
         </main>
