@@ -187,12 +187,17 @@ const activeIncident = {
 };
 
 // ── Closed incident in the log ─────────────────────────────────────
+// Realistic detection lag + recovery times for the demo:
+//   Active incident:  startTime → declaredAt = ~3 hours (good MTTD)
+//   Closed incident:  declaredAt 95d ago → closedAt 82d ago = 13d MTTR
+//                     startTime ~7 hours before declaredAt (slower MTTD)
 const incidentLog = [
   {
     incidentId: "INC-DEMO-001",
     title: activeIncident.title,
     severity: "High",
     masterTicketId: 9001,
+    startTime: new Date(Date.now() - 2 * 86400000 - 3 * 3600000).toLocaleString(),
     declaredAt: DAYS_AGO(2).toLocaleString(),
     status: "Active" as const,
   },
@@ -201,6 +206,7 @@ const incidentLog = [
     title: "Q1 Phishing Campaign — Credential Harvest",
     severity: "Medium",
     masterTicketId: 9002,
+    startTime: new Date(Date.now() - 95 * 86400000 - 7 * 3600000).toLocaleString(),
     declaredAt: DAYS_AGO(95).toLocaleString(),
     closedAt: DAYS_AGO(82).toLocaleString(),
     status: "Closed" as const,

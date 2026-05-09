@@ -371,11 +371,14 @@ async function applyDemoSeed(tenantId: string): Promise<void> {
       })),
     }),
 
-    // Incidents — log entries plus optional active full record on the matching row
+    // Incidents — log entries plus optional active full record on the matching row.
+    // Always preserve startTime in the data column so MTTD survives across saves
+    // even when the incident isn't currently active.
     prisma.incident.createMany({
       data: freshIncidents.map((e) => {
         const id = e.incidentId as string;
         const isActive = freshActive && (freshActive.id as string) === id;
+        const fallbackData = e.startTime ? { startTime: e.startTime } : null;
         return {
           id,
           tenantId,
@@ -385,7 +388,9 @@ async function applyDemoSeed(tenantId: string): Promise<void> {
           declaredAt: (e.declaredAt as string) ?? "",
           closedAt: (e.closedAt as string) ?? null,
           masterTicketId: (e.masterTicketId as number) ?? null,
-          data: isActive ? (freshActive as unknown as runtime.InputJsonValue) : undefined,
+          data: isActive
+            ? (freshActive as unknown as runtime.InputJsonValue)
+            : (fallbackData as unknown as runtime.InputJsonValue | undefined),
         };
       }),
     }),

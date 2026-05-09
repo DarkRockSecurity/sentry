@@ -45,7 +45,8 @@ interface TaskRow {
 }
 interface IncidentLogRow {
   incidentId: string; title: string; severity: string;
-  masterTicketId?: number; declaredAt: string; closedAt?: string;
+  masterTicketId?: number; startTime?: string;
+  declaredAt: string; closedAt?: string;
   status: "Active" | "Closed";
 }
 interface ForensicLogRow {
@@ -140,15 +141,21 @@ export async function loadTenantState(): Promise<StateBlob | null> {
   }));
 
   // Incident: rows produce both incidentLog (summaries) and activeIncident (current full record)
-  const incidentLog: IncidentLogRow[] = incidentRows.map((r) => ({
-    incidentId: r.id,
-    title: r.title,
-    severity: r.severity,
-    masterTicketId: r.masterTicketId ?? undefined,
-    declaredAt: r.declaredAt,
-    closedAt: r.closedAt ?? undefined,
-    status: r.status === "Active" ? "Active" : "Closed",
-  }));
+  const incidentLog: IncidentLogRow[] = incidentRows.map((r) => {
+    const fullData = (r.data ?? {}) as Record<string, unknown>;
+    return {
+      incidentId: r.id,
+      title: r.title,
+      severity: r.severity,
+      masterTicketId: r.masterTicketId ?? undefined,
+      // startTime lives in the JSON `data` column for any incident that has
+      // had its full record persisted (active now, or active-then-closed).
+      startTime: typeof fullData.startTime === "string" ? fullData.startTime : undefined,
+      declaredAt: r.declaredAt,
+      closedAt: r.closedAt ?? undefined,
+      status: r.status === "Active" ? "Active" : "Closed",
+    };
+  });
   const activeIncidentRow = incidentRows.find((r) => r.status === "Active" && r.data);
   const activeIncident = activeIncidentRow?.data ?? null;
 
@@ -415,11 +422,16 @@ async function syncIncidentsTo(
       closedAt: e.closedAt ?? null,
       masterTicketId: e.masterTicketId ?? null,
     };
+    // For non-active log entries, mirror startTime into data so MTTD survives
+    // round-trips even when the full activeIncident record isn't present.
+    const summaryData = e.startTime ? { startTime: e.startTime } : null;
     return prisma.incident.upsert({
       where: { id },
       create: {
         id, ...baseData,
-        data: isActive ? (activeIncident as unknown as runtime.InputJsonValue) : undefined,
+        data: isActive
+          ? (activeIncident as unknown as runtime.InputJsonValue)
+          : (summaryData as unknown as runtime.InputJsonValue | undefined),
       },
       update: {
         ...baseData,

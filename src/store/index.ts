@@ -25,7 +25,11 @@ export interface IncidentLogEntry {
   title: string;
   severity: string;
   masterTicketId: number;
+  /** When the incident actually started (detection / first-signal time) — feeds MTTD. */
+  startTime?: string;
+  /** When the incident was declared in Sentry. */
   declaredAt: string;
+  /** When the incident was closed — feeds MTTR. */
   closedAt?: string;
   status: "Active" | "Closed";
 }

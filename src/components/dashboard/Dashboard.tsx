@@ -15,7 +15,7 @@ export function Dashboard() {
   const {
     assessments, tasks, tickets, cases, activeIncident, stakeholders,
     policiesGen, forensicLogs, lessons, irData, onboardDone, org, tech, comp,
-    metrics, setPage, addLesson, threatIntelItems,
+    metrics, setPage, addLesson, threatIntelItems, incidentLog,
   } = useStore();
   const modal = useModal();
   const colors = useColors();
@@ -70,18 +70,74 @@ export function Dashboard() {
   const sh: React.CSSProperties = { color: colors.textMuted, fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 };
   const dot = (c: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: "50%", background: c, display: "inline-block" });
 
-  const kpis: KPI[] = [
-    { l: "Resilience Score", v: lastAss ? lastAss.score : "—", c: lastAss ? (lastAss.score >= 70 ? colors.green : lastAss.score >= 50 ? colors.yellow : colors.red) : colors.textDim, u: lastAss ? "/100" : "no assessment", page: "assess" },
+  // ── Performance metrics: MTTD + MTTR ─────────────────────────────
+  // MTTD = avg(declaredAt − startTime) across all log entries that have both
+  // MTTR = avg(closedAt − declaredAt) across closed log entries
+  // Tolerance: allow up to 60s of clock-skew between formats (toLocaleString
+  // truncates ms while toISOString preserves them) before rejecting an entry.
+  const { mttdMs, mttdCount, mttrMs, mttrCount } = useMemo(() => {
+    const parse = (s?: string) => (s ? Date.parse(s) : NaN);
+    const TOLERANCE_MS = 60_000;
+    const detect: number[] = [];
+    const respond: number[] = [];
+    for (const e of incidentLog ?? []) {
+      const declared = parse(e.declaredAt);
+      const start = parse(e.startTime);
+      const closed = parse(e.closedAt);
+      if (Number.isFinite(declared) && Number.isFinite(start) && declared >= start - TOLERANCE_MS) {
+        detect.push(Math.max(0, declared - start));
+      }
+      if (Number.isFinite(closed) && Number.isFinite(declared) && closed >= declared - TOLERANCE_MS) {
+        respond.push(Math.max(0, closed - declared));
+      }
+    }
+    const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+    return { mttdMs: avg(detect), mttdCount: detect.length, mttrMs: avg(respond), mttrCount: respond.length };
+  }, [incidentLog]);
+
+  const securityEvents = tickets.filter((t) => t.ticketType === "security-event").length;
+  const securityEventsActive = tickets.some((t) => t.ticketType === "security-event" && t.status !== "Closed");
+  const zeroDays = threatIntelItems.filter((i) => i.isZeroDay).length;
+  const exploitedZeroDays = threatIntelItems.filter((i) => i.isZeroDay && i.isActivelyExploited).length;
+
+  const activeOps: KPI[] = [
+    { l: "Active Cases", v: openCases, c: openCases > 0 ? colors.orange : colors.green, u: openCases === 1 ? "open" : "open", page: "playbooks" },
     { l: "Open Tickets", v: openTickets, c: openTickets > 0 ? colors.orange : colors.green, u: "active", page: "tickets" },
     { l: "Open Tasks", v: openTasks, c: openTasks > 3 ? colors.red : openTasks > 0 ? colors.yellow : colors.green, u: "pending", page: "tasks" },
-    { l: "Active Cases", v: openCases, c: openCases > 0 ? colors.orange : colors.green, u: "open", page: "playbooks" },
+    { l: "Security Events", v: securityEvents, c: securityEventsActive ? colors.orange : colors.green, u: securityEventsActive ? "in flight" : "all closed", page: "tickets" },
+  ];
+
+  const performance: KPI[] = [
+    {
+      l: "MTTD",
+      v: mttdMs == null ? "—" : formatDuration(mttdMs),
+      c: mttdMs == null ? colors.textDim : mttdMs <= 4 * 3600000 ? colors.green : mttdMs <= 24 * 3600000 ? colors.yellow : colors.red,
+      u: mttdMs == null ? "no signal" : `n=${mttdCount}`,
+      page: "incidentlog",
+    },
+    {
+      l: "MTTR",
+      v: mttrMs == null ? "—" : formatDuration(mttrMs),
+      c: mttrMs == null ? colors.textDim : mttrMs <= 24 * 3600000 ? colors.green : mttrMs <= 7 * 24 * 3600000 ? colors.yellow : colors.red,
+      u: mttrMs == null ? "no closed" : `n=${mttrCount}`,
+      page: "incidentlog",
+    },
+    {
+      l: "Zero-Days",
+      v: zeroDays,
+      c: zeroDays === 0 ? colors.green : exploitedZeroDays > 0 ? colors.red : colors.orange,
+      u: exploitedZeroDays > 0 ? `${exploitedZeroDays} exploited` : zeroDays === 0 ? "none active" : "active",
+      page: "threatintel",
+    },
+    { l: "Forensic Logs", v: forensicCount, c: forensicCount > 0 ? colors.cyan : colors.textDim, u: "entries", page: "forensics" },
+  ];
+
+  const readiness: KPI[] = [
+    { l: "Resilience Score", v: lastAss ? lastAss.score : "—", c: lastAss ? (lastAss.score >= 70 ? colors.green : lastAss.score >= 50 ? colors.yellow : colors.red) : colors.textDim, u: lastAss ? "/100" : "no assessment", page: "assess" },
     { l: "Stakeholders", v: totalContacts, c: totalContacts > 0 ? colors.teal : colors.textDim, u: "contacts", page: "stakeholders" },
     { l: "Vendors", v: totalVendors, c: totalVendors > 0 ? colors.purple : colors.textDim, u: "registered", page: "stakeholders" },
     { l: "Key Systems", v: totalSystems, c: totalSystems > 0 ? colors.blue : colors.textDim, u: "mapped", page: "stakeholders" },
     { l: "Policies", v: policiesCount, c: policiesCount > 0 ? colors.purple : colors.textDim, u: "generated", page: "policies" },
-    { l: "Forensic Logs", v: forensicCount, c: forensicCount > 0 ? colors.cyan : colors.textDim, u: "entries", page: "forensics" },
-    { l: "Zero-Days", v: threatIntelItems.filter((i) => i.isZeroDay).length, c: threatIntelItems.some((i) => i.isZeroDay) ? colors.red : colors.green, u: "active", page: "threatintel" },
-    { l: "Security Events", v: tickets.filter((t) => t.ticketType === "security-event").length, c: tickets.some((t) => t.ticketType === "security-event" && t.status !== "Closed") ? colors.orange : colors.green, u: "tracked", page: "tickets" },
   ];
 
   return (
@@ -167,26 +223,35 @@ export function Dashboard() {
         </Card>
       )}
 
-      {/* KPI Grid — every tile is clickable and navigates to its module */}
-      <div style={sh}><span style={dot(colors.teal)} />Operational Metrics</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 24 }}>
-        {kpis.map((x, i) => (
-          <Card
-            key={i}
-            onClick={() => setPage(x.page)}
-            style={{
-              textAlign: "center",
-              padding: "14px 10px",
-              cursor: "pointer",
-              borderTop: `2px solid ${x.c}`,
-            }}
-          >
-            <div style={{ fontSize: 8, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 600 }}>{x.l}</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: x.c, lineHeight: 1 }}>{x.v}</div>
-            {x.u && <div style={{ fontSize: 8, color: colors.textDim, marginTop: 3, fontWeight: 500 }}>{x.u}</div>}
-            <div style={{ fontSize: 8, color: x.c, marginTop: 8, fontWeight: 700, letterSpacing: "0.08em", opacity: 0.85 }}>OPEN →</div>
-          </Card>
-        ))}
+      {/* Operational Metrics — three categories: Active / Performance / Readiness */}
+      <div style={{ marginBottom: 24 }}>
+        <CategoryHeader
+          label="Active Operations"
+          sub="What needs attention right now"
+          accent={colors.orange}
+          colors={colors}
+        />
+        <MetricGrid kpis={activeOps} colors={colors} setPage={setPage} />
+
+        <div style={{ height: 14 }} />
+
+        <CategoryHeader
+          label="Performance & Exposure"
+          sub="How fast you respond, what's coming at you"
+          accent={colors.purple}
+          colors={colors}
+        />
+        <MetricGrid kpis={performance} colors={colors} setPage={setPage} />
+
+        <div style={{ height: 14 }} />
+
+        <CategoryHeader
+          label="Readiness"
+          sub="Steady-state preparedness"
+          accent={colors.teal}
+          colors={colors}
+        />
+        <MetricGrid kpis={readiness} colors={colors} setPage={setPage} />
       </div>
 
       {/* Threat Intel Pulse — Global + Industry, real data from store */}
@@ -423,6 +488,84 @@ export function Dashboard() {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const minutes = ms / 60000;
+  if (minutes < 60) return `${Math.max(1, Math.round(minutes))}m`;
+  const hours = ms / 3600000;
+  if (hours < 24) return `${Math.round(hours)}h`;
+  const days = hours / 24;
+  if (days < 14) return `${days.toFixed(days < 10 ? 1 : 0)}d`;
+  return `${Math.round(days)}d`;
+}
+
+function CategoryHeader({
+  label,
+  sub,
+  accent,
+  colors,
+}: {
+  label: string;
+  sub: string;
+  accent: string;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 14px",
+        marginBottom: 10,
+        borderLeft: `3px solid ${accent}`,
+        background: accent + "0A",
+        borderRadius: "0 8px 8px 0",
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}55`, flexShrink: 0 }} />
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ color: accent, fontSize: 11, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", fontFamily: "Figtree, sans-serif" }}>
+          {label}
+        </span>
+        <span style={{ color: colors.textMuted, fontSize: 11 }}>{sub}</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricGrid({
+  kpis,
+  colors,
+  setPage,
+}: {
+  kpis: KPI[];
+  colors: ReturnType<typeof useColors>;
+  setPage: (p: string) => void;
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
+      {kpis.map((x, i) => (
+        <Card
+          key={i}
+          onClick={() => setPage(x.page)}
+          style={{
+            textAlign: "center",
+            padding: "14px 10px",
+            cursor: "pointer",
+            borderTop: `2px solid ${x.c}`,
+          }}
+        >
+          <div style={{ fontSize: 8, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 600 }}>{x.l}</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: x.c, lineHeight: 1 }}>{x.v}</div>
+          {x.u && <div style={{ fontSize: 8, color: colors.textDim, marginTop: 3, fontWeight: 500 }}>{x.u}</div>}
+          <div style={{ fontSize: 8, color: x.c, marginTop: 8, fontWeight: 700, letterSpacing: "0.08em", opacity: 0.85 }}>OPEN →</div>
+        </Card>
+      ))}
     </div>
   );
 }
