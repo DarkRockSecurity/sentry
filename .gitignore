@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+.vercel
+
+# Underscore-prefixed scripts are local one-off helpers (may contain secrets)
+scripts/_*

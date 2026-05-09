@@ -8,6 +8,7 @@ import { CSF2 } from "@/data/csf2-controls";
 import { SCORE_LABELS } from "@/types/assessment";
 import type { Assessment, SmartQuestion } from "@/types/assessment";
 import { generateAssessmentReport } from "@/lib/assessment-report-generator";
+import { HitlistSection } from "./HitlistSection";
 
 export function AssessmentModule() {
   const { assessments, addAssessment, org, tech, comp, addTask, forensicLogs } = useStore();
@@ -155,38 +156,77 @@ export function AssessmentModule() {
             </div>
           ))}
         </Card>
+
+        <HitlistSection assessment={rpt} />
       </div>
     );
   }
 
   // History View
   if (mode === "history") {
+    const sorted = [...assessments].sort((a, b) => b.id - a.id);
+    const latest = sorted[0];
+    const previous = sorted[1];
+
     return (
       <div>
         <SectionHeader sub="Track your resilience posture over time">Assessment History</SectionHeader>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
-          <Button onClick={() => { setAns({}); setActiveFn(0); setMode("new"); }}>+ New Assessment</Button>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Badge color={colors.teal}>{assessments.length} saved</Badge>
+            {latest && (
+              <span style={{ color: colors.textMuted, fontSize: 11 }}>
+                Most recent: <strong style={{ color: colors.text }}>{latest.date}</strong> · score {latest.score}/100
+                {previous && (
+                  <span style={{ color: latest.score >= previous.score ? colors.green : colors.red, marginLeft: 8 }}>
+                    {latest.score >= previous.score ? "▲" : "▼"} {Math.abs(latest.score - previous.score)} vs previous
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+          <Button onClick={() => { setAns({}); setActiveFn(0); setMode("new"); }}>+ Run New Assessment</Button>
         </div>
+
         {assessments.length === 0 ? (
           <Card style={{ textAlign: "center" }}>
             <p style={{ color: colors.textDim, fontSize: 12 }}>No assessments completed yet. Start your first NIST CSF 2.0 assessment.</p>
             <Button style={{ marginTop: 10 }} onClick={() => setMode("new")}>Start Assessment</Button>
           </Card>
         ) : (
-          assessments.map((a) => (
-            <Card key={a.id} style={{ marginBottom: 10, cursor: "pointer" }} onClick={() => { setShowReport(a); setMode("report"); }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ color: colors.white, fontSize: 13, fontWeight: 600 }}>{a.orgName} Assessment</div>
-                  <div style={{ color: colors.textDim, fontSize: 10, marginTop: 2 }}>{a.date} | {allQs.length} controls assessed</div>
+          sorted.map((a, idx) => {
+            const prev = sorted[idx + 1];
+            const delta = prev ? a.score - prev.score : null;
+            const isLatest = idx === 0;
+            return (
+              <Card key={a.id} style={{ marginBottom: 10, cursor: "pointer", borderLeft: isLatest ? `3px solid ${colors.teal}` : undefined }} onClick={() => { setShowReport(a); setMode("report"); }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                      <span style={{ color: colors.white, fontSize: 13, fontWeight: 700 }}>{a.orgName} Assessment</span>
+                      {isLatest && <Badge color={colors.teal}>Latest</Badge>}
+                      {a.warnings.length > 0 && <Badge color={colors.orange}>{a.warnings.length} warning{a.warnings.length === 1 ? "" : "s"}</Badge>}
+                    </div>
+                    <div style={{ color: colors.textDim, fontSize: 10, display: "flex", gap: 14, flexWrap: "wrap" }}>
+                      <span>📅 {a.date}</span>
+                      <span>{allQs.length} controls</span>
+                      <span>NIST CSF 2.0</span>
+                      {delta !== null && (
+                        <span style={{ color: delta > 0 ? colors.green : delta < 0 ? colors.red : colors.textDim, fontWeight: 600 }}>
+                          {delta > 0 ? "▲" : delta < 0 ? "▼" : "—"} {delta === 0 ? "no change" : `${Math.abs(delta)} pts vs prior`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <ScoreGauge score={a.score} size={50} />
+                    <span style={{ color: colors.tealLight, fontSize: 11, fontWeight: 600 }}>Open →</span>
+                  </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <ScoreGauge score={a.score} size={50} />
-                  {a.warnings.length > 0 && <Badge color={colors.orange}>{a.warnings.length} warnings</Badge>}
-                </div>
-              </div>
-            </Card>
-          ))
+              </Card>
+            );
+          })
         )}
       </div>
     );

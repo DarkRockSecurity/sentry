@@ -1,4 +1,4 @@
-export const STAKEHOLDER_GROUPS = [
+export const INTERNAL_GROUPS = [
   { key: "incidentCommander", label: "Incident Commander", icon: "★", desc: "Primary authority for strategic incident decisions. Communicates with executive leadership.", color: "#EF4444" },
   { key: "ciso", label: "CISO / Security Leadership", icon: "🛡️", desc: "Chief Information Security Officer and security leadership team responsible for overall security posture.", color: "#00B4A6" },
   { key: "securityEngineers", label: "Security Engineers", icon: "⚙️", desc: "Technical security staff responsible for detection, analysis, containment, and eradication activities.", color: "#3B82F6" },
@@ -6,14 +6,20 @@ export const STAKEHOLDER_GROUPS = [
   { key: "riskContact", label: "Risk Management", icon: "📊", desc: "Enterprise risk management team assessing business impact and risk exposure during incidents.", color: "#F97316" },
   { key: "executivePOC", label: "Executive Points of Contact", icon: "👔", desc: "C-suite and board-level contacts for escalation, strategic decisions, and stakeholder communications.", color: "#EAB308" },
   { key: "cyberInsuranceInternal", label: "Cyber Insurance (Internal)", icon: "📋", desc: "Internal contacts responsible for managing the cyber insurance relationship and initiating claims.", color: "#06B6D4" },
-  { key: "cyberInsuranceExternal", label: "Cyber Insurance (External)", icon: "🏢", desc: "Insurance carrier contacts, claims adjusters, and breach coach assignments.", color: "#06B6D4" },
+  { key: "hrContacts", label: "Human Resources", icon: "👥", desc: "HR leadership for insider threat coordination, employee notifications, and personnel actions.", color: "#22C55E" },
+  { key: "privacyContact", label: "Privacy Officer / Data Protection", icon: "🔏", desc: "Privacy officer, data protection officer (DPO), and privacy counsel for breach notification determinations, PII/PHI impact assessment, and regulatory privacy obligations.", color: "#06B6D4" },
+];
+
+export const EXTERNAL_GROUPS = [
   { key: "externalLegal", label: "External Legal Counsel", icon: "🏛️", desc: "Outside counsel specializing in data breach, regulatory response, and litigation management.", color: "#8B5CF6" },
   { key: "forensicsContact", label: "Forensic Contact", icon: "🔬", desc: "Digital forensics and incident response contacts for evidence collection, analysis, and chain-of-custody management.", color: "#EF4444" },
-  { key: "hrContacts", label: "Human Resources", icon: "👥", desc: "HR leadership for insider threat coordination, employee notifications, and personnel actions.", color: "#22C55E" },
   { key: "prContact", label: "Public Relations / Communications", icon: "📣", desc: "Internal and external PR contacts for media relations, public statements, and stakeholder messaging.", color: "#F97316" },
-  { key: "privacyContact", label: "Privacy Officer / Data Protection", icon: "🔏", desc: "Privacy officer, data protection officer (DPO), and privacy counsel for breach notification determinations, PII/PHI impact assessment, and regulatory privacy obligations.", color: "#06B6D4" },
+  { key: "cyberInsuranceExternal", label: "Cyber Insurance (External)", icon: "🏢", desc: "Insurance carrier contacts, claims adjusters, and breach coach assignments.", color: "#06B6D4" },
   { key: "lawEnforcement", label: "Law Enforcement", icon: "🚔", desc: "Law enforcement contacts at local, state, and federal levels. Coordinate with Legal before engaging.", color: "#3B82F6" },
 ];
+
+// Backward-compat: full union used by Dashboard's coverage widget
+export const STAKEHOLDER_GROUPS = [...INTERNAL_GROUPS, ...EXTERNAL_GROUPS];
 
 export const SYSTEM_CATEGORIES = [
   "Financial Systems", "HR / HCM Systems", "Production / Operations",
@@ -21,4 +27,241 @@ export const SYSTEM_CATEGORIES = [
   "Identity / Access Management", "Email / Collaboration",
   "Customer-Facing Applications", "Development / DevOps",
   "Physical Security", "Telecommunications", "Other",
+];
+
+// Topic-based vendor categories for incident response.
+// Each carries a description (what the category is) and `irRole` (why it
+// matters during an incident) so the Vendors tab can be self-explanatory.
+export interface VendorCategory {
+  key: string;
+  label: string;
+  short: string;
+  icon: string;
+  desc: string;
+  irRole: string;
+  examples: string;
+  color: string;
+}
+
+export const VENDOR_CATEGORIES: VendorCategory[] = [
+  {
+    key: "edr",
+    label: "EDR — Endpoint Detection & Response",
+    short: "EDR",
+    icon: "🖥️",
+    desc: "Continuous endpoint visibility, detection of malicious behavior, host isolation, and forensic acquisition.",
+    irRole: "First call for host containment, IOC sweeps, retro-hunting across endpoints, and live triage.",
+    examples: "CrowdStrike Falcon, SentinelOne, Microsoft Defender for Endpoint, Palo Alto Cortex XDR, Sophos Intercept X",
+    color: "#EF4444",
+  },
+  {
+    key: "mdr",
+    label: "MDR — Managed Detection & Response",
+    short: "MDR",
+    icon: "🕵️",
+    desc: "24×7 outsourced detection, triage, and response operations layered over your security stack.",
+    irRole: "Tier-1/2 monitoring, alert triage, escalation pager during off-hours and weekends.",
+    examples: "Arctic Wolf, Expel, Red Canary, eSentire, Sophos MDR",
+    color: "#F97316",
+  },
+  {
+    key: "xdr",
+    label: "XDR — Extended Detection & Response",
+    short: "XDR",
+    icon: "🧠",
+    desc: "Cross-domain telemetry correlation across endpoint, network, identity, email, and cloud.",
+    irRole: "Single-pane investigation across signals; auto-correlated alerts, attack path reconstruction.",
+    examples: "Microsoft Defender XDR, Palo Alto Cortex XDR, Trend Vision One, SentinelOne Singularity",
+    color: "#8B5CF6",
+  },
+  {
+    key: "siem",
+    label: "SIEM — Security Information & Event Management",
+    short: "SIEM",
+    icon: "📊",
+    desc: "Centralized log aggregation, correlation, alerting, and long-term retention for forensic queries.",
+    irRole: "Source of truth for log queries during investigation; retention for legal hold.",
+    examples: "Splunk, Microsoft Sentinel, Elastic Security, Sumo Logic, IBM QRadar, Chronicle",
+    color: "#3B82F6",
+  },
+  {
+    key: "soar",
+    label: "SOAR — Orchestration & Automated Response",
+    short: "SOAR",
+    icon: "⚡",
+    desc: "Playbook-driven automation across detection and response tools.",
+    irRole: "Run pre-built containment playbooks (block IOC, disable account, isolate host) under one click.",
+    examples: "Splunk SOAR, Palo Alto XSOAR, Tines, Torq, Microsoft Sentinel Automation",
+    color: "#EAB308",
+  },
+  {
+    key: "ndr",
+    label: "NDR — Network Detection & Response",
+    short: "NDR",
+    icon: "🌐",
+    desc: "Network traffic analysis, lateral-movement detection, and east-west visibility.",
+    irRole: "Identify lateral movement, exfil channels, and unmanaged assets during scoping.",
+    examples: "Vectra AI, ExtraHop, Darktrace, Corelight, Arista NDR",
+    color: "#06B6D4",
+  },
+  {
+    key: "firewall",
+    label: "Firewall / NGFW",
+    short: "FW",
+    icon: "🧱",
+    desc: "Perimeter and segmentation controls; IPS, application awareness, and TLS inspection.",
+    irRole: "Block IOCs at egress/ingress; enforce containment segmentation rules.",
+    examples: "Palo Alto Networks, Fortinet FortiGate, Cisco Firepower, Check Point, Sophos XGS",
+    color: "#22C55E",
+  },
+  {
+    key: "email",
+    label: "Email Security",
+    short: "Email",
+    icon: "📧",
+    desc: "Phishing, BEC, malware, and impersonation defense for inbound and outbound mail.",
+    irRole: "Pull/quarantine malicious mail org-wide; identify phishing victims and click metadata.",
+    examples: "Proofpoint, Mimecast, Microsoft Defender for Office 365, Abnormal, Avanan",
+    color: "#00B4A6",
+  },
+  {
+    key: "identity",
+    label: "Identity Provider / SSO",
+    short: "IdP",
+    icon: "🪪",
+    desc: "Authentication, federation, and single sign-on for workforce and customer identities.",
+    irRole: "Disable compromised accounts, force password resets, revoke sessions, audit sign-ins.",
+    examples: "Okta, Microsoft Entra ID (Azure AD), Ping Identity, Duo, JumpCloud",
+    color: "#3B82F6",
+  },
+  {
+    key: "mfa",
+    label: "MFA / Adaptive Authentication",
+    short: "MFA",
+    icon: "🔑",
+    desc: "Multi-factor and risk-based authentication enforcement.",
+    irRole: "Force step-up auth on suspicious sessions; rotate factors after compromise.",
+    examples: "Duo Security, Microsoft Authenticator, Yubico YubiKey, Okta Verify",
+    color: "#06B6D4",
+  },
+  {
+    key: "pam",
+    label: "Privileged Access Management",
+    short: "PAM",
+    icon: "🗝️",
+    desc: "Vaulted credentials, just-in-time elevation, and session recording for privileged accounts.",
+    irRole: "Rotate compromised privileged secrets; replay session recordings during forensics.",
+    examples: "CyberArk, BeyondTrust, Delinea, HashiCorp Vault",
+    color: "#8B5CF6",
+  },
+  {
+    key: "cloud",
+    label: "Cloud Provider (IaaS / PaaS)",
+    short: "Cloud",
+    icon: "☁️",
+    desc: "Hyperscale infrastructure and managed services; primary control plane for cloud workloads.",
+    irRole: "Snapshot affected workloads, revoke IAM access, query cloud audit logs.",
+    examples: "AWS, Microsoft Azure, Google Cloud, Oracle Cloud",
+    color: "#EAB308",
+  },
+  {
+    key: "microsoft365",
+    label: "Microsoft 365 / Productivity Suite",
+    short: "M365",
+    icon: "🏢",
+    desc: "Email, identity, files, Teams, SharePoint, and tenant-level security controls.",
+    irRole: "Run UAL queries, audit mailbox rules, identify exfiltrated files, contain Teams accounts.",
+    examples: "Microsoft 365 (E3/E5/G5), Google Workspace",
+    color: "#3B82F6",
+  },
+  {
+    key: "casb",
+    label: "CASB — Cloud Access Security Broker",
+    short: "CASB",
+    icon: "🛡️",
+    desc: "Visibility and policy enforcement across SaaS applications.",
+    irRole: "Identify shadow-IT, block unsanctioned SaaS, audit risky data access patterns.",
+    examples: "Netskope, Microsoft Defender for Cloud Apps, Zscaler, Skyhigh",
+    color: "#F97316",
+  },
+  {
+    key: "dlp",
+    label: "DLP — Data Loss Prevention",
+    short: "DLP",
+    icon: "🔏",
+    desc: "Detect and block exfiltration of sensitive data across endpoints, mail, and cloud.",
+    irRole: "Confirm/quantify exfiltration; identify data types involved for breach notification.",
+    examples: "Microsoft Purview DLP, Forcepoint, Symantec DLP, Proofpoint DLP",
+    color: "#EF4444",
+  },
+  {
+    key: "waf",
+    label: "WAF / API Security",
+    short: "WAF",
+    icon: "🌐",
+    desc: "Web and API request filtering, bot defense, and DDoS mitigation at the edge.",
+    irRole: "Deploy virtual patches, block exploit payloads, geo-restrict during active attack.",
+    examples: "Cloudflare, AWS WAF / Shield, Akamai, Imperva, F5",
+    color: "#22C55E",
+  },
+  {
+    key: "vuln",
+    label: "Vulnerability Management",
+    short: "VM",
+    icon: "🔍",
+    desc: "Asset discovery and continuous scanning for known vulnerabilities.",
+    irRole: "Scope which assets are exposed to the active CVE; prioritize remediation tickets.",
+    examples: "Tenable, Qualys, Rapid7 InsightVM, Wiz, Orca, Snyk",
+    color: "#EAB308",
+  },
+  {
+    key: "patch",
+    label: "Patch & Configuration Management",
+    short: "Patch",
+    icon: "🩹",
+    desc: "Operating-system and third-party patch deployment and config baselining.",
+    irRole: "Push emergency patches; enforce hardened baselines after eradication.",
+    examples: "Microsoft Intune / Configuration Manager, Tanium, Ivanti, Automox, Jamf",
+    color: "#06B6D4",
+  },
+  {
+    key: "backup",
+    label: "Backup & Recovery",
+    short: "Backup",
+    icon: "💾",
+    desc: "Immutable backups, snapshots, and recovery orchestration for ransomware resilience.",
+    irRole: "Restore impacted data; validate backup integrity; coordinate recovery sequencing.",
+    examples: "Veeam, Rubrik, Cohesity, Commvault, AWS Backup, Azure Backup",
+    color: "#3B82F6",
+  },
+  {
+    key: "dfir",
+    label: "DFIR — External IR Retainer",
+    short: "DFIR",
+    icon: "🧪",
+    desc: "Pre-negotiated incident response retainer for surge capacity and forensic expertise.",
+    irRole: "On-demand IR responders, forensic imaging, malware reverse engineering, ransomware negotiation.",
+    examples: "Dark Rock Cybersecurity, Mandiant, CrowdStrike Services, Unit 42, Kroll, Stroz Friedberg",
+    color: "#EF4444",
+  },
+  {
+    key: "ti",
+    label: "Threat Intelligence",
+    short: "TI",
+    icon: "🛰️",
+    desc: "Curated CVE, IOC, and adversary intelligence feeds.",
+    irRole: "Attribution context, IOC enrichment, threat-actor TTP libraries during scoping.",
+    examples: "Recorded Future, Mandiant Advantage, Anomali, Flashpoint, Intel 471",
+    color: "#8B5CF6",
+  },
+  {
+    key: "swg",
+    label: "Secure Web Gateway / DNS Security",
+    short: "SWG",
+    icon: "🚦",
+    desc: "Outbound web traffic filtering and DNS-layer threat blocking.",
+    irRole: "Block C2 domains, sinkhole malicious DNS, audit user web activity post-compromise.",
+    examples: "Cisco Umbrella, Zscaler Internet Access, Cloudflare Gateway, Palo Alto Prisma Access",
+    color: "#00B4A6",
+  },
 ];

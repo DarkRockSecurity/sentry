@@ -7,6 +7,96 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─── Tenancy ─────────────────────────────────────────────────────────
+
+enum UserRole {
+  super_admin
+  tenant_admin
+  analyst
+  viewer
+}
+
+enum TenantStatus {
+  trial
+  active
+  paused
+  deprovisioned
+}
+
+enum TenantPlan {
+  trial
+  starter
+  professional
+  enterprise
+  demo
+}
+
+model Tenant {
+  id            String       @id @default(cuid())
+  name          String
+  slug          String       @unique
+  status        TenantStatus @default(trial)
+  plan          TenantPlan   @default(trial)
+  isDemoTenant  Boolean      @default(false)
+  trialEndsAt   DateTime?
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  notes         String?      @db.Text
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  organization  Organization?
+  users         User[]
+  state         TenantState?
+  assessments   Assessment[]
+  incidents     Incident[]
+  tickets       Ticket[]
+  tasks         Task[]
+  stakeholders  Stakeholder[]
+  keySystems    KeySystem[]
+  vendors       Vendor[]
+  policies      Policy[]
+  tabletops     Tabletop[]
+  forensicLogs  ForensicLog[]
+  lessons       Lesson[]
+  notifications IncidentNotification[]
+
+  @@index([status])
+  @@index([isDemoTenant])
+}
+
+model User {
+  id        String   @id // Mirrors Supabase auth.users.id (UUID)
+  email     String   @unique
+  fullName  String?
+  role      UserRole @default(viewer)
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  active    Boolean  @default(true)
+  invitedBy String?
+  invitedAt DateTime?
+  lastSeenAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([role])
+}
+
+// Per-tenant Zustand snapshot — the everything-blob.
+// Auto-saved on change (debounced) by the running app, hydrated on load.
+model TenantState {
+  tenantId  String   @id
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  data      Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// ─── Per-tenant data ─────────────────────────────────────────────────
+
 model Organization {
   id           String   @id @default(cuid())
   name         String
@@ -18,184 +108,213 @@ model Organization {
   contactPhone String?
   techStack    Json?
   compliance   String[]
+  tenantId     String   @unique
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-
-  assessments  Assessment[]
-  incidents    Incident[]
-  tickets      Ticket[]
-  tasks        Task[]
-  stakeholders Stakeholder[]
-  policies     Policy[]
-  tabletops    Tabletop[]
-  teamMembers  TeamMember[]
-  forensicLogs ForensicLog[]
-}
-
-model TeamMember {
-  id     String  @id @default(cuid())
-  name   String
-  email  String
-  role   String
-  active Boolean @default(true)
-  orgId  String
-  org    Organization @relation(fields: [orgId], references: [id])
 }
 
 model Assessment {
-  id        String   @id @default(cuid())
-  framework String
+  id        String   @id // Stable id supplied by the app (Date.now().toString())
+  framework String   @default("NIST CSF 2.0")
+  orgName   String   @default("")
+  date      String   @default("") // Display-formatted date string from the app
   score     Int
   answers   Json
-  grpScores Json
+  fnScores  Json     // Per-CSF-function scores (was grpScores)
   catScores Json?
   warnings  Json
   recs      Json
-  orgId     String
-  org       Organization @relation(fields: [orgId], references: [id])
+  hitlist   Json?    // { shortTerm: [...], achievable: [...], aspirational: [...] }
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
 }
 
 model Incident {
-  id               String    @id @default(cuid())
-  title            String
-  severity         String
-  status           String    @default("Active")
-  startTime        DateTime
-  endTime          DateTime?
-  internalCostRate Float     @default(150)
-  iocs             String[]
-  affectedUsers    String[]
-  affectedAssets   String[]
-  affectedRegions  String[]
-  privacyConcern   Boolean   @default(false)
-  attorneyPrivilege Boolean  @default(false)
-  privilegeBy      String?
-  privilegeAt      DateTime?
-  phaseStatus      Json
-  findings         Json
-  timeline         Json
-  workstreams      Json
-  escalation       Json
-  expenses         Json
-  summaries        Json
-  notifications    Json
-  members          Json
+  id             String   @id // App-supplied incidentId (e.g. INC-DEMO-001)
+  title          String
+  severity       String
+  status         String   // "Active" | "Closed"
+  declaredAt     String   // Display-formatted date string from the app
+  closedAt       String?
+  masterTicketId Int?
+  data           Json?    // Full incident record (timeline, findings, IOCs, etc.) when set
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  orgId     String
-  org       Organization @relation(fields: [orgId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  @@index([tenantId, status])
+  @@index([tenantId, declaredAt])
 }
 
 model Ticket {
-  id        String   @id @default(cuid())
-  title     String
-  severity  String
-  status    String   @default("Open")
-  phase     String?
-  assignee  String?
-  details   String?  @db.Text
-  actions   Json
-  orgId     String
-  org       Organization @relation(fields: [orgId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                     String   @id // Stable id supplied by the app
+  title                  String
+  severity               String
+  status                 String   @default("Open")
+  phase                  String?
+  assignee               String?
+  details                String?  @db.Text
+  actions                Json
+  created                String?  // Display-formatted date string from the app
+  // Hierarchy
+  parentId               String?
+  childIds               Json?    // string[] of child ticket ids
+  // Incident linkage
+  ticketType             String?  // "master" | "child" | "standalone" | "security-event"
+  incidentId             String?
+  incidentTitle          String?
+  // Threat intel linkage
+  threatIntelId          String?
+  threatIntelTitle       String?
+  applicability          String?  // "applicable" | "not-applicable" | "pending"
+  verifiedExploit        Boolean?
+  // Misc
+  playbookId             String?
+  subtaskCount           Int?
+  tenantId               String
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, ticketType])
 }
 
 model Task {
-  id       String   @id @default(cuid())
-  title    String
-  priority String
-  status   String   @default("Backlog")
-  assignee String?
-  source   String?
-  updates  Json
-  orgId    String
-  org      Organization @relation(fields: [orgId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id // Stable id supplied by the app
+  title       String
+  priority    String
+  status      String   @default("Backlog")
+  assignee    String?
+  source      String?
+  updates     Json
+  created     String?  // Display-formatted date string from the app
+  irPhase     String?
+  incidentId  String?
+  ticketId    String?
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, status])
 }
 
 model Stakeholder {
-  id               String  @id @default(cuid())
+  id               String   @id // Stable id supplied by the app
   groupKey         String
   firstName        String
   lastName         String
   title            String?
-  responsibilities String? @db.Text
+  responsibilities String?  @db.Text
   email            String?
   cell             String?
-  orgId            String
-  org              Organization @relation(fields: [orgId], references: [id])
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt        DateTime @default(now())
+
+  @@index([tenantId, groupKey])
 }
 
 model KeySystem {
-  id          String  @id @default(cuid())
+  id          String   @id // Stable id supplied by the app
   systemName  String
   category    String
   criticality String
   owner       String?
   ownerEmail  String?
   ownerCell   String?
-  notes       String? @db.Text
-  orgId       String
+  notes       String?  @db.Text
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Vendor {
+  id            String   @id // Stable id supplied by the app
+  category      String
+  vendorName    String
+  productName   String?
+  accountId     String?
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  supportPortal String?
+  supportTier   String?
+  slaResponse   String?
+  isPrimary     Boolean  @default(false)
+  notes         String?  @db.Text
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, category])
 }
 
 model Policy {
-  id         String   @id @default(cuid())
+  // Each row tracks that a tenant has generated a given policy template.
+  // Composite uniqueness on (tenantId, templateId) — same template only once per tenant.
+  id         String   @id // = ${tenantId}:${templateId}
   templateId String
-  title      String
-  version    String   @default("1.0")
-  content    String   @db.Text
-  orgId      String
-  org        Organization @relation(fields: [orgId], references: [id])
+  title      String?
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, templateId])
+  @@index([tenantId])
 }
 
 model Tabletop {
-  id             String   @id @default(cuid())
-  title          String
-  scenario       String
-  date           DateTime
-  facilitator    String?
-  participants   String[]
-  status         String   @default("Scheduled")
-  rating         Int?
-  notes          String?  @db.Text
-  findings       Json
-  lessonsLearned Json
-  actionItems    Json
-  feedback       Json
-  orgId          String
-  org            Organization @relation(fields: [orgId], references: [id])
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id        String   @id // App-supplied id
+  title     String
+  status    String   @default("Scheduled")
+  date      String   // Display-formatted date string
+  rating    Int?
+  data      Json     // Full record: scenario, participants, objectives, findings, lessonsLearned, actionItems, feedback, etc.
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, date])
 }
 
 model ForensicLog {
-  id             String   @id @default(cuid())
+  id             String   @id // App-supplied id
   title          String
   classification String
-  caseRef        String?
-  description    String?  @db.Text
-  encrypted      Boolean  @default(false)
-  orgId          String
-  org            Organization @relation(fields: [orgId], references: [id])
+  incidentId     String?
+  data           Json     // Full record: chainOfCustody, accessList, files, encrypted, locked, etc.
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt      DateTime @default(now())
+
+  @@index([tenantId, incidentId])
+  @@index([tenantId, classification])
 }
 
 model Lesson {
-  id        String   @id @default(cuid())
-  text      String
-  source    String?
-  orgId     String
+  id        String   @id // App-supplied id
+  text      String   @db.Text
+  src       String?  // Source/origin (e.g. "Tabletop AAR", "Incident IR")
+  date      String?  // Display date string
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
 }
 
+// Threat intelligence is global (cross-tenant) but optionally pinned to a tenant
 model ThreatIntel {
   id                  String   @id @default(cuid())
   feedSource          String
@@ -227,7 +346,6 @@ model ThreatIntel {
   recommendations     String?  @db.Text
   executiveSummary    String?  @db.Text
 
-  orgId               String?
   expiresAt           DateTime
 
   @@index([publishedAt])
@@ -238,57 +356,59 @@ model ThreatIntel {
 }
 
 model IncidentNotification {
-  id                String   @id @default(cuid())
-  incidentId        String
+  id                  String    @id @default(cuid())
+  incidentId          String
 
-  type              String
-  tier              Int
-  groupKey          String
-  groupLabel        String
+  type                String
+  tier                Int
+  groupKey            String
+  groupLabel          String
 
-  recipients        Json
-  recipientCount    Int
+  recipients          Json
+  recipientCount      Int
 
-  subject           String
-  body              String   @db.Text
-  classification    String
-  channel           String   @default("email")
+  subject             String
+  body                String    @db.Text
+  classification      String
+  channel             String    @default("email")
 
-  deltaFromId       String?
-  deltaSummary      String?  @db.Text
-  version           Int      @default(1)
+  deltaFromId         String?
+  deltaSummary        String?   @db.Text
+  version             Int       @default(1)
 
-  incidentSnapshot  Json
+  incidentSnapshot    Json
 
-  correctionOfId    String?
-  correctionReason  String?
-  retracted         Boolean  @default(false)
-  retractedBy       String?
-  retractedAt       DateTime?
-  retractedReason   String?
+  correctionOfId      String?
+  correctionReason    String?
+  retracted           Boolean   @default(false)
+  retractedBy         String?
+  retractedAt         DateTime?
+  retractedReason     String?
 
-  generatedBy       String
-  generatedByEmail  String?
-  generatedAt       DateTime @default(now())
-  approvalRequired  Boolean  @default(false)
-  approvedBy        String?
-  approvedByEmail   String?
-  approvedAt        DateTime?
-  approvalStatus    String?
-  rejectionReason   String?
-  sentBy            String
-  sentByEmail       String?
-  sentAt            DateTime @default(now())
-  sendMethod        String
+  generatedBy         String
+  generatedByEmail    String?
+  generatedAt         DateTime  @default(now())
+  approvalRequired    Boolean   @default(false)
+  approvedBy          String?
+  approvedByEmail     String?
+  approvedAt          DateTime?
+  approvalStatus      String?
+  rejectionReason     String?
+  sentBy              String
+  sentByEmail         String?
+  sentAt              DateTime  @default(now())
+  sendMethod          String
 
-  acknowledged      Boolean  @default(false)
-  acknowledgedBy    String?
+  acknowledged        Boolean   @default(false)
+  acknowledgedBy      String?
   acknowledgedByEmail String?
-  acknowledgedAt    DateTime?
+  acknowledgedAt      DateTime?
 
-  orgId             String
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@index([incidentId, groupKey])
-  @@index([incidentId, sentAt])
-  @@index([incidentId, version])
+  @@index([tenantId, incidentId, groupKey])
+  @@index([tenantId, incidentId, sentAt])
+  @@index([tenantId, incidentId, version])
 }
+

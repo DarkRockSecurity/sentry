@@ -334,7 +334,7 @@ const defaultStakeholders: StakeholderData = {
   riskContact: [], executivePOC: [], cyberInsuranceInternal: [],
   cyberInsuranceExternal: [], externalLegal: [], forensicsContact: [],
   hrContacts: [], prContact: [], privacyContact: [], lawEnforcement: [],
-  keySystems: [],
+  keySystems: [], vendors: [],
 };
 
 // Empty metrics - only real incidents populate this

@@ -16,6 +16,7 @@ import { requiresApproval, isTier4 } from "@/lib/notifications/approval";
 import { detectOOBCondition } from "@/lib/notifications/oob-detection";
 import { initializeFilings, getFilingTimeRemaining } from "@/lib/notifications/regulatory";
 import { finalizeDraft, buildAuditSummary, exportCommunicationLog } from "@/lib/notifications/accountability";
+import { sendNotificationEmail, isEmailConfigured } from "@/app/app/_actions";
 
 const TIER_ICONS: Record<string, string> = {
   incidentCommander: "★", securityEngineers: "⚙️", ciso: "🛡️", riskContact: "📊",
@@ -48,6 +49,12 @@ export function NotificationCenter({ incident }: Props) {
   const [commHold, setCommHold] = useState(false);
   const [commHoldBy, setCommHoldBy] = useState("");
   const [, setCommHoldHistory] = useState<CommHoldEntry[]>([]);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    isEmailConfigured().then(setEmailEnabled).catch(() => setEmailEnabled(false));
+  }, []);
   const [oobMode, setOobMode] = useState(false);
   const [previewGroup, setPreviewGroup] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<NotificationType>("status_update");
@@ -81,7 +88,7 @@ export function NotificationCenter({ incident }: Props) {
   }, [commLog]);
 
   // Send notification
-  const sendNotification = useCallback(async (groupKey: string, type: NotificationType, sendMethod: "clipboard" | "email_client" | "marked_sent") => {
+  const sendNotification = useCallback(async (groupKey: string, type: NotificationType, sendMethod: "clipboard" | "email_client" | "email_direct" | "marked_sent") => {
     if (commHold) {
       await modal.showAlert("Communication Hold Active", `Communications are held by ${commHoldBy}. No notifications can be sent until the hold is released.`);
       return;
@@ -141,7 +148,37 @@ export function NotificationCenter({ incident }: Props) {
     } else if (sendMethod === "email_client") {
       const mailto = `mailto:${recipients.map((r) => r.email).filter(Boolean).join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       window.open(mailto, "_blank");
+    } else if (sendMethod === "email_direct") {
+      const to = recipients.map((r) => r.email).filter(Boolean);
+      if (to.length === 0) {
+        await modal.showAlert("No Email Recipients", `${GROUP_LABELS[groupKey]} has no contacts with an email address. Add emails in Stakeholders.`);
+        return;
+      }
+      setSending(true);
+      const res = await sendNotificationEmail({
+        to,
+        subject,
+        body,
+        classification,
+        privileged: classification.toLowerCase().includes("privileged"),
+      });
+      setSending(false);
+      if (!res.ok) {
+        const friendly =
+          res.reason === "not_configured"
+            ? "Email is not configured. Set RESEND_API_KEY + EMAIL_FROM in env."
+            : res.reason === "no_recipients"
+              ? "No valid email addresses among the recipients."
+              : `Send failed: ${res.error}`;
+        await modal.showAlert("Email Send Failed", friendly);
+      } else {
+        await modal.showAlert(
+          "✓ Email Sent",
+          `Notification (v${version}) delivered to ${res.recipientCount} recipient${res.recipientCount === 1 ? "" : "s"} in ${GROUP_LABELS[groupKey]}.`,
+        );
+      }
     }
+    // sendMethod === "marked_sent" — no action; record is already logged above
   }, [commHold, commHoldBy, stakeholders, clockStates, currentSnapshot, incident, getLastNotification, modal, oobMode, CURRENT_USER]);
 
   // ═══ RENDER ═══════════════════════════════════════════════════════
@@ -325,12 +362,34 @@ export function NotificationCenter({ incident }: Props) {
             )}
 
             {/* Send actions */}
-            <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-              <Button onClick={() => { sendNotification(previewGroup, previewType, "clipboard"); setPreviewGroup(null); }} disabled={commHold}>Copy to Clipboard</Button>
+            <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+              {emailEnabled && (
+                <Button
+                  onClick={async () => {
+                    await sendNotification(previewGroup, previewType, "email_direct");
+                    setPreviewGroup(null);
+                  }}
+                  disabled={commHold || sending}
+                >
+                  {sending ? "Sending…" : "Send Email"}
+                </Button>
+              )}
+              <Button
+                variant={emailEnabled ? "secondary" : "primary"}
+                onClick={() => { sendNotification(previewGroup, previewType, "clipboard"); setPreviewGroup(null); }}
+                disabled={commHold}
+              >
+                Copy to Clipboard
+              </Button>
               <Button variant="secondary" onClick={() => { sendNotification(previewGroup, previewType, "email_client"); setPreviewGroup(null); }} disabled={commHold}>Open in Email</Button>
               <Button variant="ghost" onClick={() => { sendNotification(previewGroup, previewType, "marked_sent"); setPreviewGroup(null); }} disabled={commHold}>Mark as Sent</Button>
               <Button variant="ghost" onClick={() => setPreviewGroup(null)}>Cancel</Button>
             </div>
+            {!emailEnabled && (
+              <div style={{ marginTop: 6, color: colors.textDim, fontSize: 9, fontStyle: "italic" }}>
+                Email auto-send is disabled. Set <code>RESEND_API_KEY</code> + <code>EMAIL_FROM</code> in env to enable a one-click Send Email button.
+              </div>
+            )}
 
             {/* Attribution */}
             <div style={{ marginTop: 8, color: colors.textDim, fontSize: 8 }}>

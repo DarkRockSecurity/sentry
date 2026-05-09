@@ -27,6 +27,22 @@ export interface KeySystem {
   notes: string;
 }
 
+export interface Vendor {
+  id: number;
+  category: string;
+  vendorName: string;
+  productName: string;
+  accountId: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  supportPortal: string;
+  supportTier: string;
+  slaResponse: string;
+  isPrimary: boolean;
+  notes: string;
+}
+
 export interface StakeholderData {
   incidentCommander: StakeholderPerson[];
   ciso: StakeholderPerson[];
@@ -43,5 +59,6 @@ export interface StakeholderData {
   privacyContact: StakeholderPerson[];
   lawEnforcement: StakeholderPerson[];
   keySystems: KeySystem[];
-  [key: string]: StakeholderPerson[] | KeySystem[];
+  vendors: Vendor[];
+  [key: string]: StakeholderPerson[] | KeySystem[] | Vendor[];
 }

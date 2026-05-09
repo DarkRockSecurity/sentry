@@ -32,9 +32,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${figtree.variable} ${sourceSans.variable} ${jetbrainsMono.variable}`}>
-      <body className="antialiased">
-        {children}
-      </body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

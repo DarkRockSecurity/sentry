@@ -1,7 +1,7 @@
 export type NotificationType = "kick_off" | "status_update" | "phase_progression" | "escalation" | "closure" | "correction" | "retraction";
 export type NotificationTier = 1 | 2 | 3 | 4;
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "escalated";
-export type SendMethod = "clipboard" | "email_client" | "marked_sent" | "api";
+export type SendMethod = "clipboard" | "email_client" | "email_direct" | "marked_sent" | "api";
 export type NotificationChannel = "email" | "signal" | "whatsapp" | "sms" | "phone";
 export type SLAStatus = "on_track" | "due_soon" | "overdue" | "standing_by";
 export type FilingStatus = "Not Applicable" | "Not Filed" | "In Preparation" | "Filed" | "Acknowledged";

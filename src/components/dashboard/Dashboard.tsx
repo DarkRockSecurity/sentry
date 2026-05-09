@@ -9,6 +9,8 @@ import { PLAYBOOKS } from "@/data/playbooks";
 
 const V = "3.1.0";
 
+type KPI = { l: string; v: string | number; c: string; u: string; page: string };
+
 export function Dashboard() {
   const {
     assessments, tasks, tickets, cases, activeIncident, stakeholders,
@@ -23,9 +25,10 @@ export function Dashboard() {
   const openTickets = tickets.filter((t) => t.status !== "Closed").length;
   const openCases = cases.filter((c) => c.status === "Open").length;
   const totalContacts = Object.entries(stakeholders || {})
-    .filter(([k]) => k !== "keySystems")
+    .filter(([k]) => k !== "keySystems" && k !== "vendors")
     .reduce((s, e) => s + (e[1] as unknown[]).length, 0);
   const totalSystems = (stakeholders?.keySystems || []).length;
+  const totalVendors = (stakeholders?.vendors || []).length;
   const policiesCount = policiesGen?.length || 0;
   const forensicCount = forensicLogs?.length || 0;
 
@@ -44,8 +47,42 @@ export function Dashboard() {
     return Math.floor((new Date().getTime() - lastIncDate.getTime()) / 86400000);
   }, [cases]);
 
+  // ── Threat-intel slice (real data only) ─────────────────────────────
+  const tiByScope = useMemo(() => {
+    const industry = org?.industry || "";
+    const isGlobal = (i: typeof threatIntelItems[number]) => i.feedCategory === "global" || !i.industryTag;
+    const isIndustry = (i: typeof threatIntelItems[number]) => i.feedCategory === "industry" || (industry && i.industryTag === industry);
+    const stat = (items: typeof threatIntelItems) => ({
+      total: items.length,
+      critical: items.filter((i) => i.severityRank === "Critical").length,
+      zeroDay: items.filter((i) => i.isZeroDay).length,
+      exploited: items.filter((i) => i.isActivelyExploited).length,
+      avgRisk: items.length ? Math.round(items.reduce((a, x) => a + x.riskScore, 0) / items.length) : 0,
+      top: [...items].sort((a, b) => b.riskScore - a.riskScore)[0],
+    });
+    return {
+      global: stat(threatIntelItems.filter(isGlobal)),
+      industry: stat(threatIntelItems.filter(isIndustry)),
+      industryName: industry,
+    };
+  }, [threatIntelItems, org?.industry]);
+
   const sh: React.CSSProperties = { color: colors.textMuted, fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 };
   const dot = (c: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: "50%", background: c, display: "inline-block" });
+
+  const kpis: KPI[] = [
+    { l: "Resilience Score", v: lastAss ? lastAss.score : "—", c: lastAss ? (lastAss.score >= 70 ? colors.green : lastAss.score >= 50 ? colors.yellow : colors.red) : colors.textDim, u: lastAss ? "/100" : "no assessment", page: "assess" },
+    { l: "Open Tickets", v: openTickets, c: openTickets > 0 ? colors.orange : colors.green, u: "active", page: "tickets" },
+    { l: "Open Tasks", v: openTasks, c: openTasks > 3 ? colors.red : openTasks > 0 ? colors.yellow : colors.green, u: "pending", page: "tasks" },
+    { l: "Active Cases", v: openCases, c: openCases > 0 ? colors.orange : colors.green, u: "open", page: "playbooks" },
+    { l: "Stakeholders", v: totalContacts, c: totalContacts > 0 ? colors.teal : colors.textDim, u: "contacts", page: "stakeholders" },
+    { l: "Vendors", v: totalVendors, c: totalVendors > 0 ? colors.purple : colors.textDim, u: "registered", page: "stakeholders" },
+    { l: "Key Systems", v: totalSystems, c: totalSystems > 0 ? colors.blue : colors.textDim, u: "mapped", page: "stakeholders" },
+    { l: "Policies", v: policiesCount, c: policiesCount > 0 ? colors.purple : colors.textDim, u: "generated", page: "policies" },
+    { l: "Forensic Logs", v: forensicCount, c: forensicCount > 0 ? colors.cyan : colors.textDim, u: "entries", page: "forensics" },
+    { l: "Zero-Days", v: threatIntelItems.filter((i) => i.isZeroDay).length, c: threatIntelItems.some((i) => i.isZeroDay) ? colors.red : colors.green, u: "active", page: "threatintel" },
+    { l: "Security Events", v: tickets.filter((t) => t.ticketType === "security-event").length, c: tickets.some((t) => t.ticketType === "security-event" && t.status !== "Closed") ? colors.orange : colors.green, u: "tracked", page: "tickets" },
+  ];
 
   return (
     <div>
@@ -130,27 +167,47 @@ export function Dashboard() {
         </Card>
       )}
 
-      {/* KPI Grid */}
+      {/* KPI Grid — every tile is clickable and navigates to its module */}
       <div style={sh}><span style={dot(colors.teal)} />Operational Metrics</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(145px,1fr))", gap: 10, marginBottom: 24 }}>
-        {[
-          { l: "Resilience Score", v: lastAss ? lastAss.score : "—", c: lastAss ? (lastAss.score >= 70 ? colors.green : lastAss.score >= 50 ? colors.yellow : colors.red) : colors.textDim, u: lastAss ? "/100" : "" },
-          { l: "Open Tickets", v: openTickets, c: openTickets > 0 ? colors.orange : colors.green, u: "active" },
-          { l: "Open Tasks", v: openTasks, c: openTasks > 3 ? colors.red : openTasks > 0 ? colors.yellow : colors.green, u: "pending" },
-          { l: "Active Cases", v: openCases, c: openCases > 0 ? colors.orange : colors.green, u: "open" },
-          { l: "Stakeholders", v: totalContacts, c: totalContacts > 0 ? colors.teal : colors.textDim, u: "contacts" },
-          { l: "Key Systems", v: totalSystems, c: totalSystems > 0 ? colors.blue : colors.textDim, u: "mapped" },
-          { l: "Policies", v: policiesCount, c: policiesCount > 0 ? colors.purple : colors.textDim, u: "generated" },
-          { l: "Forensic Logs", v: forensicCount, c: forensicCount > 0 ? colors.cyan : colors.textDim, u: "entries" },
-          { l: "Zero-Days", v: threatIntelItems.filter((i) => i.isZeroDay).length, c: threatIntelItems.some((i) => i.isZeroDay) ? colors.red : colors.green, u: "active" },
-          { l: "Security Events", v: tickets.filter((t) => t.ticketType === "security-event").length, c: tickets.some((t) => t.ticketType === "security-event" && t.status !== "Closed") ? colors.orange : colors.green, u: "tracked" },
-        ].map((x, i) => (
-          <Card key={i} style={{ textAlign: "center", padding: "14px 10px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 24 }}>
+        {kpis.map((x, i) => (
+          <Card
+            key={i}
+            onClick={() => setPage(x.page)}
+            style={{
+              textAlign: "center",
+              padding: "14px 10px",
+              cursor: "pointer",
+              borderTop: `2px solid ${x.c}`,
+            }}
+          >
             <div style={{ fontSize: 8, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 600 }}>{x.l}</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: x.c, lineHeight: 1 }}>{x.v}</div>
             {x.u && <div style={{ fontSize: 8, color: colors.textDim, marginTop: 3, fontWeight: 500 }}>{x.u}</div>}
+            <div style={{ fontSize: 8, color: x.c, marginTop: 8, fontWeight: 700, letterSpacing: "0.08em", opacity: 0.85 }}>OPEN →</div>
           </Card>
         ))}
+      </div>
+
+      {/* Threat Intel Pulse — Global + Industry, real data from store */}
+      <div style={sh}><span style={dot(colors.purple)} />Threat Intelligence Pulse</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+        <ThreatPulseCard
+          title="Global Threat Pulse"
+          subtitle="Cross-industry CVEs, APT activity, and zero-days"
+          stats={tiByScope.global}
+          accent={colors.purple}
+          onOpen={() => setPage("threatintel")}
+          colors={colors}
+        />
+        <ThreatPulseCard
+          title="Industry Threat Pulse"
+          subtitle={tiByScope.industryName ? `Targeted activity for ${tiByScope.industryName}` : "Configure industry in Onboarding to filter"}
+          stats={tiByScope.industry}
+          accent={colors.cyan}
+          onOpen={() => setPage(tiByScope.industryName ? "threatintel" : "onboard")}
+          colors={colors}
+        />
       </div>
 
       {/* Assessment + Chart Row */}
@@ -361,36 +418,69 @@ export function Dashboard() {
             })}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-            <span style={{ color: colors.textDim, fontSize: 8 }}>{totalContacts} contacts · {totalSystems} systems mapped</span>
+            <span style={{ color: colors.textDim, fontSize: 8 }}>{totalContacts} contacts · {totalVendors} vendors · {totalSystems} systems</span>
             <Button variant="ghost" size="sm" onClick={() => setPage("stakeholders")}>Manage →</Button>
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
 
-      {/* Quick Actions */}
-      <div style={sh}><span style={dot(colors.blue)} />Quick Actions</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>
-        {[
-          { l: "Assessment", d: "NIST CSF 2.0", c: colors.teal, p: "assess" },
-          { l: "IR Planner", d: "9-phase lifecycle", c: colors.orange, p: "irplan" },
-          { l: "Commander", d: "Incident coordination", c: colors.red, p: "commander" },
-          { l: "Incident Log", d: "Incident tracking", c: colors.red, p: "incidentlog" },
-          { l: "Playbooks", d: `${PLAYBOOKS.length} scenarios`, c: colors.purple, p: "playbooks" },
-          { l: "Tabletop", d: "ATLAS exercises", c: colors.yellow, p: "tabletop" },
-          { l: "Tickets", d: `${openTickets} open`, c: colors.orange, p: "tickets" },
-          { l: "Tasks", d: "Kanban board", c: colors.cyan, p: "tasks" },
-          { l: "Stakeholders", d: `${totalContacts} contacts`, c: colors.yellow, p: "stakeholders" },
-          { l: "Forensics", d: "Evidence vault", c: colors.textDim, p: "forensics" },
-          { l: "Policies", d: `${policiesCount} generated`, c: colors.blue, p: "policies" },
-          { l: "Comms", d: "Out-of-band", c: colors.green, p: "comms" },
-          { l: "Integrations", d: "APIs & pen testing", c: colors.purple, p: "integrations" },
-        ].map((x) => (
-          <Card key={x.p} onClick={() => setPage(x.p)} style={{ cursor: "pointer", borderLeft: `3px solid ${x.c}`, padding: "12px 14px" }}>
-            <div style={{ color: colors.white, fontWeight: 700, fontSize: 11, marginBottom: 2 }}>{x.l}</div>
-            <div style={{ color: colors.textDim, fontSize: 9 }}>{x.d}</div>
-          </Card>
-        ))}
+function ThreatPulseCard({
+  title, subtitle, stats, accent, onOpen, colors,
+}: {
+  title: string;
+  subtitle: string;
+  stats: { total: number; critical: number; zeroDay: number; exploited: number; avgRisk: number; top?: { title: string; severityRank: string; cveId?: string; riskScore: number } };
+  accent: string;
+  onOpen: () => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const empty = stats.total === 0;
+  return (
+    <Card onClick={onOpen} style={{ cursor: "pointer", borderTop: `2px solid ${accent}` }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+        <div>
+          <div style={{ color: colors.white, fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em" }}>{title}</div>
+          <div style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>{subtitle}</div>
+        </div>
+        <Badge color={accent}>{stats.total} tracked</Badge>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 10 }}>
+        <PulseStat label="Critical" value={stats.critical} color={stats.critical > 0 ? "#EF4444" : colors.textDim} colors={colors} />
+        <PulseStat label="Zero-Day" value={stats.zeroDay} color={stats.zeroDay > 0 ? "#EF4444" : colors.textDim} colors={colors} />
+        <PulseStat label="Exploited" value={stats.exploited} color={stats.exploited > 0 ? "#F97316" : colors.textDim} colors={colors} />
+        <PulseStat label="Avg Risk" value={stats.avgRisk} suffix="/100" color={stats.avgRisk >= 70 ? "#EF4444" : stats.avgRisk >= 50 ? "#F97316" : stats.avgRisk > 0 ? "#EAB308" : colors.textDim} colors={colors} />
+      </div>
+
+      {empty ? (
+        <div style={{ color: colors.textDim, fontSize: 10, padding: "8px 0", borderTop: `1px solid ${colors.panelBorder}` }}>
+          No items tracked yet. Refresh feeds in Threat Intelligence.
+        </div>
+      ) : stats.top ? (
+        <div style={{ borderTop: `1px solid ${colors.panelBorder}`, paddingTop: 8 }}>
+          <div style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", marginBottom: 4 }}>HIGHEST RISK</div>
+          <div style={{ color: colors.text, fontSize: 11, fontWeight: 600, lineHeight: 1.35 }}>
+            {stats.top.cveId ? <span style={{ color: accent, marginRight: 6 }}>{stats.top.cveId}</span> : null}
+            {stats.top.title.length > 90 ? stats.top.title.slice(0, 90) + "…" : stats.top.title}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+            <Badge color={stats.top.severityRank === "Critical" ? "#EF4444" : stats.top.severityRank === "High" ? "#F97316" : "#EAB308"}>{stats.top.severityRank}</Badge>
+            <Badge color={colors.blue}>Risk {stats.top.riskScore}/100</Badge>
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function PulseStat({ label, value, suffix = "", color, colors }: { label: string; value: number; suffix?: string; color: string; colors: ReturnType<typeof useColors> }) {
+  return (
+    <div style={{ background: colors.obsidianM, borderRadius: 6, padding: "8px 6px", textAlign: "center" }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>{value}{suffix}</div>
+      <div style={{ fontSize: 8, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 3, fontWeight: 600 }}>{label}</div>
     </div>
   );
 }
