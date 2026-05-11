@@ -1572,6 +1572,104 @@ export async function discardPolicyDraft(templateId: string): Promise<{ ok: bool
   return { ok: true };
 }
 
+// ─── Policy acknowledgments ──────────────────────────────────────────
+//
+// Tracks which platform users have attested to reading each published
+// policy version. Acknowledgments are scoped to a specific version — when
+// a new version publishes, the workforce needs to acknowledge it again.
+
+export interface PolicyAckUser {
+  userId: string;
+  name: string;
+  email: string;
+  /** ISO date if this user has acknowledged the version, else null. */
+  acknowledgedAt: string | null;
+}
+
+export interface PolicyAckSummary {
+  policyId: string;
+  templateId: string;
+  publishedVersionId: string | null;
+  versionNumber: number | null;
+  publishedAt: string | null;
+  totalEligible: number;
+  acknowledged: number;
+  pending: number;
+  meAcknowledged: boolean;
+  users: PolicyAckUser[];
+}
+
+export async function acknowledgePolicy(templateId: string): Promise<{ ok: boolean; error?: string }> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const policy = await prisma.policy.findUnique({ where: { id: policyId(tenantId, templateId) } });
+  if (!policy?.publishedVersionId) return { ok: false, error: "No published version to acknowledge." };
+
+  const userName = session.user!.fullName ?? session.user!.email ?? "Unknown";
+  // Idempotent via the unique (policyVersionId, userId) constraint.
+  await prisma.policyAcknowledgment.upsert({
+    where: { policyVersionId_userId: { policyVersionId: policy.publishedVersionId, userId: session.authId } },
+    create: {
+      tenantId,
+      policyId: policy.id,
+      policyVersionId: policy.publishedVersionId,
+      userId: session.authId,
+      userName,
+      userEmail: session.email,
+    },
+    update: {}, // already acked — no-op
+  });
+  revalidatePath("/app");
+  return { ok: true };
+}
+
+export async function listPolicyAcknowledgments(): Promise<PolicyAckSummary[]> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const policies = await prisma.policy.findMany({
+    where: { tenantId, publishedVersionId: { not: null } },
+    include: {
+      versions: { where: { status: "published" }, take: 1 },
+    },
+  });
+  const eligibleUsers = await prisma.user.findMany({
+    where: { tenantId, active: true },
+    select: { id: true, fullName: true, email: true },
+  });
+
+  const versionIds = policies.map((p) => p.publishedVersionId).filter((id): id is string => !!id);
+  const acks = versionIds.length === 0 ? [] : await prisma.policyAcknowledgment.findMany({
+    where: { policyVersionId: { in: versionIds } },
+  });
+
+  return policies.map((p): PolicyAckSummary => {
+    const published = p.versions[0];
+    const ackedFor = acks.filter((a) => a.policyVersionId === p.publishedVersionId);
+    const ackedUserIds = new Set(ackedFor.map((a) => a.userId));
+    const users: PolicyAckUser[] = eligibleUsers.map((u) => {
+      const a = ackedFor.find((x) => x.userId === u.id);
+      return {
+        userId: u.id,
+        name: u.fullName ?? u.email,
+        email: u.email,
+        acknowledgedAt: a?.acknowledgedAt.toISOString() ?? null,
+      };
+    });
+    return {
+      policyId: p.id,
+      templateId: p.templateId,
+      publishedVersionId: p.publishedVersionId,
+      versionNumber: published?.versionNumber ?? null,
+      publishedAt: published?.publishedAt?.toISOString() ?? null,
+      totalEligible: eligibleUsers.length,
+      acknowledged: ackedUserIds.size,
+      pending: eligibleUsers.length - ackedUserIds.size,
+      meAcknowledged: ackedUserIds.has(session.authId),
+      users,
+    };
+  });
+}
+
 // ═══ Access Control: team-member management + audit log ══════════════
 //
 // Adds named-actor row-level audit trail for every meaningful access event.

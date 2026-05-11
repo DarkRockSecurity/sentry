@@ -293,6 +293,26 @@ model Policy {
   @@index([tenantId])
 }
 
+// Per-user acknowledgment that they've read a specific published version.
+// (tenantId, policyVersionId, userId) is unique — re-acknowledging the same
+// version is a no-op. When a new version publishes, prior acknowledgments
+// remain on the old version (audit record) and the new version starts with
+// zero acks.
+model PolicyAcknowledgment {
+  id              String   @id @default(cuid())
+  tenantId        String
+  policyId        String   // Policy.id ("${tenantId}:${templateId}")
+  policyVersionId String
+  userId          String
+  userName        String?  // snapshot — survives later renames / deletes
+  userEmail       String?
+  acknowledgedAt  DateTime @default(now())
+
+  @@unique([policyVersionId, userId])
+  @@index([tenantId, policyId])
+  @@index([tenantId, userId])
+}
+
 model PolicyVersion {
   // Append-only version log. Draft = editable. Published = immutable.
   // Submitter implicitly signs off at submission; an explicitly-named

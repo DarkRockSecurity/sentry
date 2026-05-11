@@ -1,35 +1,45 @@
 "use client";
 
-import { useEffect, useState, useTransition, useCallback } from "react";
+import { useEffect, useState, useTransition, useCallback, useMemo } from "react";
 import { useColors } from "@/lib/theme";
+import { useStore } from "@/store";
 import { Badge, Button, Card, SectionHeader, useModal } from "@/components/ui";
-import { POLICY_TEMPLATES } from "@/data/policy-templates";
+import { POLICY_TEMPLATES, FRAMEWORK_OPTIONS, type ComplianceFramework } from "@/data/policy-templates";
 import { PolicyEditor } from "./PolicyEditor";
+import { exportPolicy, type ExportFormat } from "@/lib/policy-export";
+import { diffLines, diffStats } from "@/lib/diff";
 import {
   listPolicies, listPolicyApprovers,
   generatePolicyDraft, savePolicyDraft,
   submitPolicyForReview, signOffPolicy, publishPolicy,
   startNewPolicyVersion, discardPolicyDraft,
-  type PolicyDTO, type PolicyVersionDTO, type ApproverCandidate,
+  acknowledgePolicy, listPolicyAcknowledgments,
+  type PolicyDTO, type PolicyVersionDTO, type ApproverCandidate, type PolicyAckSummary,
 } from "@/app/app/_actions";
 
-type Tab = "templates" | "drafts" | "live";
+type Tab = "templates" | "drafts" | "live" | "coverage";
 
 export function PoliciesModule() {
   const colors = useColors();
   const modal = useModal();
+  const tenantName = useStore((s) => s.org?.name ?? "Organization");
   const [policies, setPolicies] = useState<PolicyDTO[]>([]);
   const [approvers, setApprovers] = useState<ApproverCandidate[]>([]);
+  const [acks, setAcks] = useState<PolicyAckSummary[]>([]);
   const [tab, setTab] = useState<Tab>("templates");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
+  const [diffOpen, setDiffOpen] = useState<{ templateId: string; from: PolicyVersionDTO; to: PolicyVersionDTO } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [, startAction] = useTransition();
 
   const refresh = useCallback(async () => {
-    const [freshPolicies, freshApprovers] = await Promise.all([listPolicies(), listPolicyApprovers()]);
+    const [freshPolicies, freshApprovers, freshAcks] = await Promise.all([
+      listPolicies(), listPolicyApprovers(), listPolicyAcknowledgments(),
+    ]);
     setPolicies(freshPolicies);
     setApprovers(freshApprovers);
+    setAcks(freshAcks);
   }, []);
 
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
@@ -160,20 +170,36 @@ export function PoliciesModule() {
               </>
             }
             actions={
-              <PolicyActions
-                policy={policy!}
-                version={activeVersion}
-                busyId={busyId}
-                approvers={approvers}
-                onSubmit={() => submitForReview(tpl.id)}
-                onSignOff={() => handle(`sign:${tpl.id}`, { title: "Approval recorded", body: "You may now publish, or another admin can." }, () => signOffPolicy(tpl.id))}
-                onPublish={() => handle(`pub:${tpl.id}`, { title: "Policy published", body: "The version is now live across the tenant." }, () => publishPolicy(tpl.id))}
-                onDiscard={async () => {
-                  const ok = await modal.showConfirm("Discard this draft?", "This deletes the working draft. The published version (if any) remains live.", "danger");
-                  if (ok) handle(`disc:${tpl.id}`, { title: "Draft discarded", body: "The draft has been removed." }, () => discardPolicyDraft(tpl.id));
-                }}
-                onStartNewVersion={() => handle(`new:${tpl.id}`, { title: "New version started", body: "A fresh draft has been forked from the published version." }, () => startNewPolicyVersion(tpl.id))}
-              />
+              <>
+                <ExportMenu
+                  colors={colors}
+                  onExport={(format) => exportPolicy(format, activeVersion.content, {
+                    tenantName,
+                    policyTitle: tpl.n,
+                    versionLabel: `v${activeVersion.versionNumber} · ${statusLabel(activeVersion.status)}`,
+                    classification: "Confidential",
+                    effectiveDate: activeVersion.publishedAt?.split("T")[0],
+                    publisher: activeVersion.publishedBy?.name,
+                    approver: activeVersion.approver?.name,
+                    submitter: activeVersion.submittedBy?.name,
+                    templateId: tpl.id,
+                  })}
+                />
+                <PolicyActions
+                  policy={policy!}
+                  version={activeVersion}
+                  busyId={busyId}
+                  approvers={approvers}
+                  onSubmit={() => submitForReview(tpl.id)}
+                  onSignOff={() => handle(`sign:${tpl.id}`, { title: "Approval recorded", body: "You may now publish, or another admin can." }, () => signOffPolicy(tpl.id))}
+                  onPublish={() => handle(`pub:${tpl.id}`, { title: "Policy published", body: "The version is now live across the tenant." }, () => publishPolicy(tpl.id))}
+                  onDiscard={async () => {
+                    const ok = await modal.showConfirm("Discard this draft?", "This deletes the working draft. The published version (if any) remains live.", "danger");
+                    if (ok) handle(`disc:${tpl.id}`, { title: "Draft discarded", body: "The draft has been removed." }, () => discardPolicyDraft(tpl.id));
+                  }}
+                  onStartNewVersion={() => handle(`new:${tpl.id}`, { title: "New version started", body: "A fresh draft has been forked from the published version." }, () => startNewPolicyVersion(tpl.id))}
+                />
+              </>
             }
             onSave={async (content, changesSummary) => {
               await new Promise<void>((resolve) => {
@@ -220,6 +246,16 @@ export function PoliciesModule() {
           </Card>
         )}
 
+        {/* Acknowledgment widget — only on policies with a published version */}
+        {policy && published && (
+          <AckWidget
+            ack={acks.find((a) => a.templateId === tpl.id) ?? null}
+            colors={colors}
+            onAck={() => handle(`ack:${tpl.id}`, { title: "Acknowledgment recorded", body: "Thanks — your signature is on file for this version." }, () => acknowledgePolicy(tpl.id))}
+            busy={busyId === `ack:${tpl.id}`}
+          />
+        )}
+
         {/* Version history */}
         {policy && policy.versions.length > 0 && (
           <Card style={{ marginTop: 14 }}>
@@ -227,22 +263,35 @@ export function PoliciesModule() {
               <h3 style={{ color: colors.white, margin: 0, fontSize: 13 }}>Version history</h3>
               <span style={{ color: colors.textDim, fontSize: 10 }}>{policy.versions.length} version{policy.versions.length === 1 ? "" : "s"}</span>
             </div>
-            {policy.versions.map((v) => (
-              <div key={v.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: `1px solid ${colors.panelBorder}` }}>
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ color: colors.white, fontSize: 11, fontWeight: 700 }}>v{v.versionNumber}</span>
-                    <Badge color={statusColor(v.status, colors)}>{statusLabel(v.status)}</Badge>
-                    {v.publishedAt && <span style={{ color: colors.green, fontSize: 10 }}>· went live {new Date(v.publishedAt).toLocaleString()}</span>}
+            {policy.versions.map((v, idx) => {
+              // "Compare to previous" available when there's a chronologically prior version.
+              const prev = policy.versions[idx + 1];
+              return (
+                <div key={v.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: `1px solid ${colors.panelBorder}` }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ color: colors.white, fontSize: 11, fontWeight: 700 }}>v{v.versionNumber}</span>
+                      <Badge color={statusColor(v.status, colors)}>{statusLabel(v.status)}</Badge>
+                      {v.publishedAt && <span style={{ color: colors.green, fontSize: 10 }}>· went live {new Date(v.publishedAt).toLocaleString()}</span>}
+                    </div>
+                    {v.changesSummary && <div style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>{v.changesSummary}</div>}
+                    <div style={{ color: colors.textDim, fontSize: 9, marginTop: 2 }}>
+                      by {v.createdBy?.name ?? "Unknown"} · {new Date(v.createdAt).toLocaleString()}
+                    </div>
                   </div>
-                  {v.changesSummary && <div style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>{v.changesSummary}</div>}
-                  <div style={{ color: colors.textDim, fontSize: 9, marginTop: 2 }}>
-                    by {v.createdBy?.name ?? "Unknown"} · {new Date(v.createdAt).toLocaleString()}
-                  </div>
+                  {prev && (
+                    <Button variant="ghost" size="sm" onClick={() => setDiffOpen({ templateId: tpl.id, from: prev, to: v })}>
+                      Diff vs v{prev.versionNumber}
+                    </Button>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </Card>
+        )}
+
+        {diffOpen && diffOpen.templateId === tpl.id && (
+          <DiffView from={diffOpen.from} to={diffOpen.to} onClose={() => setDiffOpen(null)} colors={colors} />
         )}
       </div>
     );
@@ -257,11 +306,41 @@ export function PoliciesModule() {
         Policies
       </SectionHeader>
 
-      {/* Summary strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
-        <StatTile label="Templates available" value={POLICY_TEMPLATES.length} color={colors.textMuted} />
-        <StatTile label="Drafts in flight" value={draftCount} color={colors.teal} sub={draftCount > 0 ? "Click 'Drafts' to continue" : "None — your library is current"} />
-        <StatTile label="Live policies" value={liveCount} color={colors.green} sub={liveCount > 0 ? "Published, tenant-wide" : "Nothing published yet"} />
+      {/* Summary strip — each tile drills into its tab */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
+        <StatTile
+          label="Templates available"
+          value={POLICY_TEMPLATES.length}
+          color={colors.textMuted}
+          sub="Click to browse the catalog"
+          onClick={() => setTab("templates")}
+          active={tab === "templates"}
+        />
+        <StatTile
+          label="Drafts in flight"
+          value={draftCount}
+          color={colors.teal}
+          sub={draftCount > 0 ? "Click to continue editing or sign off" : "None — your library is current"}
+          onClick={() => setTab("drafts")}
+          active={tab === "drafts"}
+        />
+        <StatTile
+          label="Live policies"
+          value={liveCount}
+          color={colors.green}
+          sub={liveCount > 0 ? "Click to review and export" : "Nothing published yet"}
+          onClick={() => setTab("live")}
+          active={tab === "live"}
+        />
+        <StatTile
+          label="Framework coverage"
+          value={countCoveredFrameworks(policies)}
+          valueSuffix={`/${FRAMEWORK_OPTIONS.length}`}
+          color={colors.purple}
+          sub="Click for the coverage matrix"
+          onClick={() => setTab("coverage")}
+          active={tab === "coverage"}
+        />
       </div>
 
       {/* Tab bar */}
@@ -270,6 +349,7 @@ export function PoliciesModule() {
           ["templates", `Templates (${POLICY_TEMPLATES.length})`],
           ["drafts", `Drafts in Flight${draftCount > 0 ? ` (${draftCount})` : ""}`],
           ["live", `Live Policies${liveCount > 0 ? ` (${liveCount})` : ""}`],
+          ["coverage", "Compliance Coverage"],
         ] as const).map(([id, label]) => {
           const active = tab === id;
           return (
@@ -396,20 +476,46 @@ export function PoliciesModule() {
                   <Card key={p.id} style={{ marginBottom: 10, borderLeft: `3px solid ${colors.green}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                           <span style={{ fontSize: 20 }}>{tpl.i}</span>
                           <span style={{ color: colors.white, fontSize: 14, fontWeight: 700 }}>{tpl.n}</span>
                           <Badge color={colors.green}>Live · v{v.versionNumber}</Badge>
+                          {(() => {
+                            const a = acks.find((x) => x.templateId === p.templateId);
+                            if (!a || a.totalEligible === 0) return null;
+                            const pct = Math.round((a.acknowledged / a.totalEligible) * 100);
+                            return (
+                              <Badge color={pct === 100 ? colors.green : pct >= 50 ? colors.orange : colors.red}>
+                                {a.acknowledged}/{a.totalEligible} acknowledged · {pct}%
+                              </Badge>
+                            );
+                          })()}
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 14, rowGap: 3, fontSize: 10, color: colors.textMuted, maxWidth: 720 }}>
                           <span style={{ color: colors.textDim }}>Went live</span><span>{new Date(v.publishedAt!).toLocaleString()}</span>
                           <span style={{ color: colors.textDim }}>Published by</span><span>{v.publishedBy?.name ?? "—"}</span>
                           {v.submittedBy && <><span style={{ color: colors.textDim }}>Submitted by</span><span>{v.submittedBy.name} · {new Date(v.submittedBy.at).toLocaleString()}</span></>}
                           {v.approver && v.approverSignedAt && <><span style={{ color: colors.textDim }}>Approved by</span><span>{v.approver.name} · {new Date(v.approverSignedAt).toLocaleString()}</span></>}
+                          <span style={{ color: colors.textDim }}>Frameworks</span><span>{tpl.frameworks.join(" · ")}</span>
                         </div>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <Button size="sm" onClick={() => setSelectedTemplateId(p.templateId)}>View</Button>
+                        <ExportMenu
+                          colors={colors}
+                          compact
+                          onExport={(format) => exportPolicy(format, v.content, {
+                            tenantName,
+                            policyTitle: tpl.n,
+                            versionLabel: `v${v.versionNumber} · Live`,
+                            classification: "Confidential",
+                            effectiveDate: v.publishedAt?.split("T")[0],
+                            publisher: v.publishedBy?.name,
+                            approver: v.approver?.name,
+                            submitter: v.submittedBy?.name,
+                            templateId: p.templateId,
+                          })}
+                        />
                         <Button size="sm" variant="outline" onClick={() => handle(`new:${p.templateId}`, { title: "New version started", body: "A fresh draft has been forked." }, () => startNewPolicyVersion(p.templateId))} disabled={!!p.draftVersion || busyId === `new:${p.templateId}`}>
                           {p.draftVersion ? "Draft in flight" : "New Version"}
                         </Button>
@@ -433,6 +539,11 @@ export function PoliciesModule() {
           )}
         </>
       )}
+
+      {/* Coverage tab */}
+      {tab === "coverage" && (
+        <CoverageMatrix policies={policies} colors={colors} />
+      )}
     </div>
   );
 }
@@ -453,13 +564,305 @@ function statusLabel(status: string): string {
   return status;
 }
 
-function StatTile({ label, value, color, sub }: { label: string; value: number; color: string; sub?: string }) {
+function StatTile({
+  label, value, color, sub, valueSuffix, onClick, active,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  sub?: string;
+  valueSuffix?: string;
+  onClick?: () => void;
+  active?: boolean;
+}) {
   const colors = useColors();
   return (
-    <Card style={{ padding: "12px 14px" }}>
+    <Card
+      onClick={onClick}
+      style={{
+        padding: "12px 14px",
+        cursor: onClick ? "pointer" : "default",
+        borderColor: active ? color + "55" : undefined,
+        background: active ? color + "0F" : undefined,
+      }}
+    >
       <div style={{ color: colors.textDim, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>{label}</div>
-      <div style={{ color, fontSize: 26, fontWeight: 800, lineHeight: 1.1, marginTop: 4 }}>{value}</div>
+      <div style={{ color, fontSize: 26, fontWeight: 800, lineHeight: 1.1, marginTop: 4 }}>
+        {value}
+        {valueSuffix && <span style={{ color: colors.textDim, fontSize: 14, fontWeight: 600 }}>{valueSuffix}</span>}
+      </div>
       {sub && <div style={{ color: colors.textMuted, fontSize: 10, marginTop: 4 }}>{sub}</div>}
+    </Card>
+  );
+}
+
+/** Counts how many compliance frameworks are covered by at least one published policy. */
+function countCoveredFrameworks(policies: PolicyDTO[]): number {
+  const covered = new Set<ComplianceFramework>();
+  for (const p of policies) {
+    if (!p.publishedVersion) continue;
+    const tpl = POLICY_TEMPLATES.find((t) => t.id === p.templateId);
+    tpl?.frameworks.forEach((f) => covered.add(f));
+  }
+  return covered.size;
+}
+
+/** Export dropdown — PDF / Word / TXT / Markdown. Closes on outside click. */
+function ExportMenu({ colors, onExport, compact }: { colors: ReturnType<typeof useColors>; onExport: (format: ExportFormat) => void; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    setTimeout(() => window.addEventListener("click", close, { once: true }), 0);
+    return () => window.removeEventListener("click", close);
+  }, [open]);
+
+  const formats: { id: ExportFormat; label: string; hint: string }[] = [
+    { id: "pdf",  label: "PDF",      hint: "Print-styled, saves via browser" },
+    { id: "docx", label: "Word",     hint: ".doc — opens in Word / Google Docs" },
+    { id: "txt",  label: "Text",     hint: "Plain text, markdown stripped" },
+    { id: "md",   label: "Markdown", hint: "Raw .md source" },
+  ];
+  return (
+    <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+      <Button size="sm" variant="outline" onClick={() => setOpen((v) => !v)}>
+        {compact ? "Export ▾" : "Export ▾"}
+      </Button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", right: 0, marginTop: 4, zIndex: 60,
+          background: colors.panel, border: `1px solid ${colors.panelBorder}`,
+          borderRadius: 7, boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+          minWidth: 220, padding: 4,
+        }}>
+          {formats.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => { setOpen(false); onExport(f.id); }}
+              style={{
+                display: "block", width: "100%", textAlign: "left",
+                padding: "8px 10px", borderRadius: 5, border: "none",
+                background: "transparent", color: colors.text, cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = colors.teal + "1A"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 12 }}>{f.label}</div>
+              <div style={{ color: colors.textDim, fontSize: 10, marginTop: 1 }}>{f.hint}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Acknowledgment widget shown on every published policy. Lets the current
+ *  user acknowledge; shows org-wide coverage summary. */
+function AckWidget({
+  ack, colors, onAck, busy,
+}: {
+  ack: PolicyAckSummary | null;
+  colors: ReturnType<typeof useColors>;
+  onAck: () => void;
+  busy: boolean;
+}) {
+  if (!ack) return null;
+  const pct = ack.totalEligible === 0 ? 0 : Math.round((ack.acknowledged / ack.totalEligible) * 100);
+  const tone = pct === 100 ? colors.green : pct >= 50 ? colors.orange : colors.red;
+
+  return (
+    <Card style={{ marginTop: 14, borderLeft: `3px solid ${tone}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ color: colors.white, margin: 0, fontSize: 13 }}>Workforce acknowledgment</h3>
+          <p style={{ color: colors.textMuted, fontSize: 11, margin: "4px 0 8px", lineHeight: 1.5 }}>
+            Every active platform user is expected to acknowledge they've read the live version of this policy. Coverage resets when a new version publishes.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ color: tone, fontSize: 22, fontWeight: 800, lineHeight: 1 }}>
+              {ack.acknowledged}<span style={{ color: colors.textDim, fontSize: 14 }}> / {ack.totalEligible}</span>
+            </div>
+            <div style={{ flex: 1, height: 6, background: colors.obsidianL, borderRadius: 3, overflow: "hidden", maxWidth: 320 }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: tone }} />
+            </div>
+            <span style={{ color: tone, fontSize: 12, fontWeight: 700 }}>{pct}%</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "stretch" }}>
+          {ack.meAcknowledged ? (
+            <Badge color={colors.green}>✓ You've acknowledged</Badge>
+          ) : (
+            <Button size="sm" onClick={onAck} disabled={busy}>
+              {busy ? "Recording…" : "I have read this policy"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {ack.users.length > 0 && (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ color: colors.textMuted, fontSize: 11, cursor: "pointer" }}>Per-user coverage</summary>
+          <div style={{ marginTop: 8 }}>
+            {ack.users.map((u) => (
+              <div key={u.userId} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: `1px solid ${colors.panelBorder}` }}>
+                <span style={{ color: colors.text, fontSize: 11 }}>
+                  {u.name} <span style={{ color: colors.textDim, fontSize: 10 }}>· {u.email}</span>
+                </span>
+                <span style={{ color: u.acknowledgedAt ? colors.green : colors.textDim, fontSize: 11 }}>
+                  {u.acknowledgedAt ? `✓ ${new Date(u.acknowledgedAt).toLocaleString()}` : "Pending"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </Card>
+  );
+}
+
+/** Diff modal — line-level comparison between two versions of a policy. */
+function DiffView({ from, to, onClose, colors }: { from: PolicyVersionDTO; to: PolicyVersionDTO; onClose: () => void; colors: ReturnType<typeof useColors> }) {
+  const lines = useMemo(() => diffLines(from.content, to.content), [from.content, to.content]);
+  const stats = useMemo(() => diffStats(lines), [lines]);
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: "fixed", inset: 0, zIndex: 9999,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
+        padding: 20,
+      }}
+    >
+      <div style={{
+        background: colors.panel, border: `1px solid ${colors.panelBorder}`,
+        borderRadius: 10, width: "100%", maxWidth: 980, maxHeight: "90vh",
+        display: "flex", flexDirection: "column", overflow: "hidden",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${colors.panelBorder}`, background: colors.obsidianM }}>
+          <div>
+            <h3 style={{ color: colors.white, margin: 0, fontSize: 14 }}>
+              v{from.versionNumber} → v{to.versionNumber}
+            </h3>
+            <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 11 }}>
+              <span style={{ color: colors.green }}>+ {stats.added} added</span>
+              <span style={{ color: colors.red }}>− {stats.removed} removed</span>
+              <span style={{ color: colors.textMuted }}>= {lines.length - stats.added - stats.removed} unchanged</span>
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose}>Close</Button>
+        </div>
+        <div style={{ overflowY: "auto", padding: "12px 0", fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 11, lineHeight: 1.55 }}>
+          {lines.map((l, i) => (
+            <div key={i} style={{
+              display: "grid",
+              gridTemplateColumns: "44px 44px 18px 1fr",
+              gap: 4,
+              padding: "1px 14px",
+              background: l.op === "add" ? colors.green + "12" : l.op === "remove" ? colors.red + "12" : "transparent",
+              color: l.op === "equal" ? colors.textMuted : colors.text,
+            }}>
+              <span style={{ color: colors.textDim, textAlign: "right" }}>{l.oldLine ?? ""}</span>
+              <span style={{ color: colors.textDim, textAlign: "right" }}>{l.newLine ?? ""}</span>
+              <span style={{ color: l.op === "add" ? colors.green : l.op === "remove" ? colors.red : colors.textDim, textAlign: "center", fontWeight: 700 }}>
+                {l.op === "add" ? "+" : l.op === "remove" ? "−" : " "}
+              </span>
+              <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{l.text || " "}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Compliance Coverage matrix — frameworks × templates with live/draft/none status. */
+function CoverageMatrix({ policies, colors }: { policies: PolicyDTO[]; colors: ReturnType<typeof useColors> }) {
+  const statusByTemplate = useMemo(() => {
+    const m: Record<string, "live" | "draft" | "none"> = {};
+    for (const tpl of POLICY_TEMPLATES) {
+      const p = policies.find((x) => x.templateId === tpl.id);
+      m[tpl.id] = p?.publishedVersion ? "live" : p?.draftVersion || p?.inReviewVersion ? "draft" : "none";
+    }
+    return m;
+  }, [policies]);
+
+  return (
+    <Card>
+      <h3 style={{ color: colors.white, margin: 0, fontSize: 14, fontWeight: 700 }}>Compliance Framework Coverage</h3>
+      <p style={{ color: colors.textMuted, fontSize: 11, margin: "3px 0 14px", maxWidth: 740, lineHeight: 1.5 }}>
+        Cross-reference each policy template against the frameworks it provides evidence for. A framework is <strong>covered</strong> when at least one mapped policy has a published version.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, marginBottom: 18 }}>
+        {FRAMEWORK_OPTIONS.map((fw) => {
+          const mapped = POLICY_TEMPLATES.filter((t) => t.frameworks.includes(fw));
+          const live = mapped.filter((t) => statusByTemplate[t.id] === "live").length;
+          const draft = mapped.filter((t) => statusByTemplate[t.id] === "draft").length;
+          const tone = live > 0 ? colors.green : draft > 0 ? colors.orange : colors.red;
+          return (
+            <div key={fw} style={{ background: colors.obsidianM, borderRadius: 8, padding: 12, borderLeft: `3px solid ${tone}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: colors.white, fontSize: 12, fontWeight: 700 }}>{fw}</span>
+                <Badge color={tone}>{live > 0 ? "Covered" : draft > 0 ? "In Progress" : "Gap"}</Badge>
+              </div>
+              <div style={{ color: colors.textMuted, fontSize: 10, marginTop: 4 }}>
+                {live} live · {draft} in flight · {mapped.length - live - draft} not started
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Detailed matrix */}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${colors.panelBorder}`, color: colors.textDim, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em" }}>POLICY</th>
+              <th style={{ textAlign: "center", padding: "8px 6px", borderBottom: `1px solid ${colors.panelBorder}`, color: colors.textDim, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em" }}>STATUS</th>
+              {FRAMEWORK_OPTIONS.map((fw) => (
+                <th key={fw} style={{ textAlign: "center", padding: "8px 6px", borderBottom: `1px solid ${colors.panelBorder}`, color: colors.textDim, fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>
+                  {fw}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {POLICY_TEMPLATES.map((tpl) => {
+              const status = statusByTemplate[tpl.id];
+              return (
+                <tr key={tpl.id} style={{ borderBottom: `1px solid ${colors.panelBorder}` }}>
+                  <td style={{ padding: "8px 6px", color: colors.text }}>
+                    <span style={{ marginRight: 6 }}>{tpl.i}</span>{tpl.n}
+                  </td>
+                  <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                    <Badge color={status === "live" ? colors.green : status === "draft" ? colors.orange : colors.textDim}>
+                      {status === "live" ? "Live" : status === "draft" ? "In Flight" : "—"}
+                    </Badge>
+                  </td>
+                  {FRAMEWORK_OPTIONS.map((fw) => {
+                    const applies = tpl.frameworks.includes(fw);
+                    return (
+                      <td key={fw} style={{ padding: "8px 6px", textAlign: "center", color: applies ? (status === "live" ? colors.green : colors.textMuted) : colors.panelBorder, fontSize: 14 }}>
+                        {applies ? (status === "live" ? "●" : "○") : "·"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 14, color: colors.textDim, fontSize: 10, lineHeight: 1.6 }}>
+        Legend: <span style={{ color: colors.green }}>● live</span> · <span style={{ color: colors.textMuted }}>○ mapped but not published</span> · <span style={{ color: colors.panelBorder }}>· not applicable</span>
+      </div>
     </Card>
   );
 }
