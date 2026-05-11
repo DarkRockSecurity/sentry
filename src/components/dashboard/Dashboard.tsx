@@ -97,6 +97,27 @@ export function Dashboard() {
 
   const securityEvents = tickets.filter((t) => t.ticketType === "security-event").length;
   const securityEventsActive = tickets.some((t) => t.ticketType === "security-event" && t.status !== "Closed");
+
+  // Incident-trend timeline derived directly from incidentLog (single source
+  // of truth). Months with zero log entries are dropped — the user only sees
+  // points that correspond to real incidents.
+  const incidentTrend = useMemo(() => {
+    const buckets = new Map<string, { label: string; sortKey: number; count: number }>();
+    for (const e of incidentLog ?? []) {
+      const t = Date.parse(e.declaredAt || "");
+      if (!Number.isFinite(t)) continue;
+      const d = new Date(t);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+      const sortKey = d.getFullYear() * 12 + d.getMonth();
+      const existing = buckets.get(key);
+      if (existing) existing.count += 1;
+      else buckets.set(key, { label, sortKey, count: 1 });
+    }
+    return Array.from(buckets.values())
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map((b) => ({ l: b.label, v: b.count }));
+  }, [incidentLog]);
   const zeroDays = threatIntelItems.filter((i) => i.isZeroDay).length;
   const exploitedZeroDays = threatIntelItems.filter((i) => i.isZeroDay && i.isActivelyExploited).length;
 
@@ -154,7 +175,10 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Status Page */}
+      {/* Status banner — the gradient backgrounds are always dark, so we
+          force literal white-on-* contrast regardless of theme. `colors.white`
+          would flip to a dark color in light mode and become unreadable on
+          the dark-green "All Clear" gradient — that was the contrast bug. */}
       <div style={{
         borderRadius: 10, padding: 0, marginBottom: 20, overflow: "hidden",
         border: `1px solid ${status === "red" ? colors.red + "55" : status === "yellow" ? colors.orange + "44" : colors.green + "44"}`,
@@ -170,28 +194,28 @@ export function Dashboard() {
               <div style={{ width: 28, height: 28, borderRadius: "50%", background: status === "red" ? colors.red : status === "yellow" ? colors.orange : colors.green, position: "relative", boxShadow: `0 0 20px ${(status === "red" ? colors.red : status === "yellow" ? colors.orange : colors.green)}66` }} />
             </div>
             <div>
-              <div style={{ color: colors.white, fontSize: 16, fontWeight: 800, letterSpacing: "0.04em" }}>{statusLabel}</div>
+              <div style={{ color: "#FFFFFF", fontSize: 16, fontWeight: 800, letterSpacing: "0.04em", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>{statusLabel}</div>
               <p style={{ color: status === "red" ? "#fecaca" : status === "yellow" ? "#fed7aa" : "#bbf7d0", fontSize: 11, margin: "3px 0 0", maxWidth: 480 }}>{statusDesc}</p>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ textAlign: "center", background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "10px 18px", minWidth: 80 }}>
-              <div style={{ fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)", fontSize: 28, fontWeight: 800, color: colors.white, lineHeight: 1 }}>
+            <div style={{ textAlign: "center", background: "rgba(0,0,0,0.32)", borderRadius: 8, padding: "10px 18px", minWidth: 80 }}>
+              <div style={{ fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)", fontSize: 28, fontWeight: 800, color: "#FFFFFF", lineHeight: 1 }}>
                 {status === "red" ? "0" : daysSince !== null ? daysSince : "—"}
               </div>
-              <div style={{ fontSize: 8, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 3 }}>Days Without Incident</div>
+              <div style={{ fontSize: 8, color: "rgba(255,255,255,0.78)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 3 }}>Days Without Incident</div>
             </div>
             {status === "red"
               ? <Button variant="danger" onClick={() => setPage("commander")} style={{ background: "#dc2626", fontWeight: 700 }}>Open Commander →</Button>
-              : <Button variant="outline" size="sm" onClick={() => setPage("commander")} style={{ borderColor: "rgba(255,255,255,0.3)", color: colors.white }}>Declare Incident</Button>
+              : <Button variant="outline" size="sm" onClick={() => setPage("commander")} style={{ borderColor: "rgba(255,255,255,0.55)", color: "#FFFFFF", background: "rgba(0,0,0,0.18)" }}>Declare Incident</Button>
             }
           </div>
         </div>
         {activeIncident && (
-          <div style={{ padding: "12px 20px", background: colors.panel, borderTop: `1px solid ${colors.red}22`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ padding: "12px 20px", background: colors.panel, borderTop: `1px solid ${colors.red}33`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ color: colors.red, fontSize: 12, fontWeight: 700 }}>●</span>
-              <span style={{ color: colors.white, fontSize: 12, fontWeight: 700 }}>{activeIncident.title}</span>
+              <span style={{ color: colors.text, fontSize: 12, fontWeight: 700 }}>{activeIncident.title}</span>
               <Badge color={activeIncident.severity === "Critical" ? colors.red : colors.orange}>{activeIncident.severity}</Badge>
               <Badge color={colors.blue}>{activeIncident.members?.length || 0} Responders</Badge>
             </div>
@@ -313,23 +337,23 @@ export function Dashboard() {
         </Card>
 
         <Card>
-          <div style={sh}><span style={dot(colors.orange)} />Incident Trend — 12 Months</div>
-          {metrics.some((m) => m.v > 0) ? (
+          <div style={sh}><span style={dot(colors.orange)} />Incident Trend</div>
+          {incidentTrend.length > 0 ? (
             <>
-              <MiniChart data={metrics} />
+              <MiniChart data={incidentTrend} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <span style={{ fontSize: 8, color: colors.textMuted }}>■ <span style={{ color: colors.teal }}>Normal</span></span>
-                  <span style={{ fontSize: 8, color: colors.textMuted }}>■ <span style={{ color: colors.orange }}>Elevated</span></span>
-                  <span style={{ fontSize: 8, color: colors.textMuted }}>■ <span style={{ color: colors.red }}>Critical</span></span>
-                </div>
-                <span style={{ fontSize: 9, color: colors.textDim }}>Total: {metrics.reduce((a, x) => a + x.v, 0)}</span>
+                <span style={{ fontSize: 9, color: colors.textDim }}>
+                  {incidentTrend.length} month{incidentTrend.length === 1 ? "" : "s"} with logged incidents
+                </span>
+                <span style={{ fontSize: 9, color: colors.textDim }}>
+                  Total: {incidentTrend.reduce((a, x) => a + x.v, 0)}
+                </span>
               </div>
             </>
           ) : (
             <div style={{ textAlign: "center", padding: "24px 0" }}>
               <div style={{ color: colors.green, fontSize: 11, fontWeight: 600, marginBottom: 4 }}>No Incidents Recorded</div>
-              <div style={{ color: colors.textDim, fontSize: 10 }}>Incident data will appear here as incidents are declared and tracked.</div>
+              <div style={{ color: colors.textDim, fontSize: 10 }}>Months appear here only after an incident is declared and logged.</div>
             </div>
           )}
         </Card>
