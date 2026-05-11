@@ -19,6 +19,24 @@ export function TasksModule() {
   const [nf, setNf] = useState({ title: "", priority: "Medium", assignee: "", irPhase: "" });
   const [editId, setEditId] = useState<number | null>(null);
 
+  /** IDs of tasks currently checked for bulk operations. */
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const toggleSelect = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set());
+  const selectAllInCol = (col: TaskStatus) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      tasks.filter((t) => t.status === col).forEach((t) => next.add(t.id));
+      return next;
+    });
+  };
+
   const handleDelete = async (id: number, title: string) => {
     const ok = await modal.showConfirm(
       "Delete this task?",
@@ -28,12 +46,57 @@ export function TasksModule() {
     if (ok) {
       deleteTask(id);
       setEditId((prev) => (prev === id ? null : prev));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
+  };
+
+  const handleBulkDelete = async () => {
+    const count = selected.size;
+    if (count === 0) return;
+    const ok = await modal.showConfirm(
+      `Delete ${count} task${count === 1 ? "" : "s"}?`,
+      `${count} task${count === 1 ? " will be" : "s will be"} permanently removed from the board. This cannot be undone.`,
+      "danger",
+    );
+    if (!ok) return;
+    selected.forEach((id) => deleteTask(id));
+    clearSelection();
+  };
+
+  const handleBulkMarkDone = () => {
+    selected.forEach((id) => updateTask(id, { status: "Done" }));
+    clearSelection();
   };
 
   return (
     <div>
       <SectionHeader sub="Kanban board for remediation tracking from lessons learned and assessments">Tasks</SectionHeader>
+
+      {/* Bulk-action toolbar — appears only when one or more tasks are checked */}
+      {selected.size > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 8, marginBottom: 12, padding: "10px 14px",
+          background: colors.teal + "12",
+          border: `1px solid ${colors.teal}55`,
+          borderRadius: 8,
+          flexWrap: "wrap",
+        }}>
+          <span style={{ color: colors.teal, fontSize: 12, fontWeight: 700 }}>
+            {selected.size} task{selected.size === 1 ? "" : "s"} selected
+          </span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Button size="sm" variant="outline" onClick={handleBulkMarkDone}>✓ Mark Done</Button>
+            <Button size="sm" variant="danger" onClick={handleBulkDelete}>Delete Selected</Button>
+            <Button size="sm" variant="ghost" onClick={clearSelection}>Clear</Button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12, gap: 6 }}>
         <Button onClick={() => setShowNew(true)}>+ New Task</Button>
       </div>
@@ -86,18 +149,53 @@ export function TasksModule() {
             <div key={col} style={{ background: colors.obsidianL, borderRadius: 8, padding: 10, border: `1px solid ${colors.panelBorder}`, minHeight: 200 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <h4 style={{ color: colors.textMuted, margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>{col}</h4>
-                <Badge color={col === "Done" ? colors.green : colors.textMuted}>{colTasks.length}</Badge>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {colTasks.length > 0 && (
+                    <button
+                      onClick={() => selectAllInCol(col)}
+                      title={`Select all ${colTasks.length} task${colTasks.length === 1 ? "" : "s"} in ${col}`}
+                      style={{
+                        background: "transparent", border: "none", cursor: "pointer",
+                        color: colors.textDim, fontSize: 9, fontFamily: "inherit",
+                        padding: "2px 4px", borderRadius: 3,
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = colors.teal; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = colors.textDim; }}
+                    >☑</button>
+                  )}
+                  <Badge color={col === "Done" ? colors.green : colors.textMuted}>{colTasks.length}</Badge>
+                </div>
               </div>
               {colTasks.length === 0 && (
                 <div style={{ textAlign: "center", padding: "20px 0", color: colors.textDim, fontSize: 9 }}>
                   No tasks
                 </div>
               )}
-              {colTasks.map((task) => (
-                <div key={task.id} style={{ background: colors.panel, borderRadius: 7, padding: 10, marginBottom: 8, borderLeft: `3px solid ${priColors[task.priority] || colors.teal}`, cursor: "pointer", position: "relative" }}
+              {colTasks.map((task) => {
+                const isSelected = selected.has(task.id);
+                return (
+                <div key={task.id} style={{
+                  background: isSelected ? colors.teal + "12" : colors.panel,
+                  borderRadius: 7, padding: 10, marginBottom: 8,
+                  borderLeft: `3px solid ${priColors[task.priority] || colors.teal}`,
+                  border: isSelected ? `1px solid ${colors.teal}55` : `1px solid transparent`,
+                  cursor: "pointer", position: "relative",
+                }}
                   onClick={() => setEditId(editId === task.id ? null : task.id)}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
-                    <div style={{ color: colors.white, fontSize: 11, fontWeight: 600, flex: 1 }}>{task.title}</div>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flex: 1, minWidth: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelect(task.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Select for bulk action"
+                        style={{
+                          marginTop: 2, accentColor: colors.teal, cursor: "pointer", flexShrink: 0,
+                        }}
+                      />
+                      <div style={{ color: colors.white, fontSize: 11, fontWeight: 600, flex: 1, minWidth: 0 }}>{task.title}</div>
+                    </div>
                     <button
                       onClick={(e) => { e.stopPropagation(); void handleDelete(task.id, task.title); }}
                       title="Delete task"
@@ -138,7 +236,8 @@ export function TasksModule() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           );
         })}
