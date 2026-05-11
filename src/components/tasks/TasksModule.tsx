@@ -217,12 +217,36 @@ export function TasksModule() {
                   {editId === task.id && (
                     <div style={{ marginTop: 8, borderTop: `1px solid ${colors.panelBorder}`, paddingTop: 8 }} onClick={(e) => e.stopPropagation()}>
                       {(task.updates || []).map((up, i) => (
-                        <div key={i} style={{ fontSize: 9, color: colors.textMuted, padding: "2px 0" }}>[{up.date}] {up.text}</div>
+                        <div key={i} style={{ fontSize: 9, color: colors.textMuted, padding: "2px 0" }}>
+                          <span style={{ color: colors.textDim }}>[{up.date}]</span>{" "}
+                          {up.by && <span style={{ color: colors.teal, fontWeight: 600 }}>{up.by}: </span>}
+                          {up.text}
+                        </div>
                       ))}
                       <Button variant="ghost" size="sm" style={{ marginTop: 4 }} onClick={async () => {
-                        const r = await modal.showPrompt("Add Task Update", [{ key: "update", label: "Update", required: true, type: "textarea" }]);
-                        const t = r?.update;
-                        if (t) updateTask(task.id, { updates: [...(task.updates || []), { text: t, date: new Date().toLocaleDateString() }] });
+                        // Remember the recorder's name across updates so they don't retype each time.
+                        const remembered = typeof window !== "undefined"
+                          ? window.localStorage.getItem("sentry_task_update_author") ?? ""
+                          : "";
+                        const r = await modal.showPrompt(
+                          "Add Task Update",
+                          [
+                            { key: "by", label: "Your name", required: true, placeholder: "e.g. Alex Bates", defaultValue: remembered },
+                            { key: "update", label: "Update", required: true, type: "textarea" },
+                          ],
+                          "Both fields are captured in the task's update history with a timestamp.",
+                        );
+                        if (r?.update && r?.by) {
+                          if (typeof window !== "undefined") {
+                            window.localStorage.setItem("sentry_task_update_author", r.by);
+                          }
+                          updateTask(task.id, {
+                            updates: [
+                              ...(task.updates || []),
+                              { text: r.update, date: new Date().toLocaleString(), by: r.by },
+                            ],
+                          });
+                        }
                       }}>+ Update</Button>
                       <div style={{ display: "flex", gap: 3, marginTop: 6, flexWrap: "wrap" }}>
                         {COLS.filter((c) => c !== col).map((c) => (

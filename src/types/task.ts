@@ -18,4 +18,6 @@ export interface TaskItem {
 export interface TaskUpdate {
   text: string;
   date: string;
+  /** Who recorded the update. Captured at write time; survives later user renames/deletes. */
+  by?: string;
 }
