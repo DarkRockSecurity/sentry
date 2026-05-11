@@ -478,7 +478,19 @@ export function TabletopModule() {
                 else if (ltCurrentPhase < phases.length - 1) { setLtCurrentPhase(ltCurrentPhase + 1); setLtCurrentStep(0); }
               }}>Next →</Button>
             ) : (
-              <Button onClick={() => setLtStep("summary")}>Finish Walk-Through</Button>
+              <Button onClick={async () => {
+                // Saving an empty exercise produces a useless AAR. Confirm if the
+                // user hasn't engaged with any step (no notes, no gap flag).
+                const engaged = ltSteps.some((s) => (s.response && s.response.trim()) || s.gapIdentified || (s.confidence && s.confidence !== "Unknown"));
+                if (!engaged) {
+                  const ok = await modal.showConfirm(
+                    "Finish without notes?",
+                    "You haven't recorded any notes or identified any gaps. The exercise summary will be empty. Continue anyway?",
+                  );
+                  if (!ok) return;
+                }
+                setLtStep("summary");
+              }}>Finish Walk-Through</Button>
             )}
           </div>
         </div>

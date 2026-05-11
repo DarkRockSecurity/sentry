@@ -75,7 +75,7 @@ export function StakeholdersModule() {
     startInvite(async () => {
       const res = await inviteStakeholder({ stakeholderId: p.id, role });
       if (!res.ok) {
-        await modal.showAlert("Invite failed", res.error);
+        await modal.showAlert("Invite failed", res.error ?? "The invite could not be sent. Check the email address and try again.");
         return;
       }
       // Reflect the invite locally so the badge shows immediately (server-side

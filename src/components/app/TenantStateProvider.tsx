@@ -46,6 +46,15 @@ export function TenantStateProvider({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [savingState, setSavingState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
+  // Expose the Zustand store on window so Playwright (screenshot script,
+  // future E2E tests) can navigate via setPage without depending on the DOM
+  // structure of the sidebar. No-op in SSR; harmless in production.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as unknown as { __sentryStore?: typeof useStore }).__sentryStore = useStore;
+    }
+  }, []);
+
   // Hydrate on mount
   useEffect(() => {
     let cancelled = false;

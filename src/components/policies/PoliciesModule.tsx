@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useColors } from "@/lib/theme";
 import { useStore } from "@/store";
 import { Badge, Button, Card, SectionHeader } from "@/components/ui";
@@ -12,15 +12,26 @@ export function PoliciesModule() {
   const colors = useColors();
   const [sel, setSel] = useState<string | null>(null);
   const [gen, setGen] = useState<Record<string, string>>({});
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [, startGen] = useTransition();
 
   const O = org?.name || "[Organization Name]";
   const D = new Date().toISOString().split("T")[0];
   const CF = (comp || []).join(", ") || "As determined by organizational requirements";
 
   const genPolicy = (id: string) => {
-    const result = generatePolicy(id, O, D, tech, CF);
-    setGen((p) => ({ ...p, [id]: result }));
-    addPolicyGen(id);
+    setGeneratingId(id);
+    // Wrap in a transition so React can yield while the synchronous template
+    // expansion runs (some templates are 3-4k lines and would jank the UI).
+    startGen(() => {
+      // Defer one microtask so the spinner badge actually paints before work starts.
+      Promise.resolve().then(() => {
+        const result = generatePolicy(id, O, D, tech, CF);
+        setGen((p) => ({ ...p, [id]: result }));
+        addPolicyGen(id);
+        setGeneratingId(null);
+      });
+    });
   };
 
   if (sel && gen[sel]) {
@@ -71,11 +82,17 @@ export function PoliciesModule() {
       </Card>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
         {POLICY_TEMPLATES.map((t) => (
-          <Card key={t.id} onClick={() => { if (!gen[t.id]) genPolicy(t.id); setSel(t.id); }}
-            style={{ cursor: "pointer", borderColor: gen[t.id] ? colors.green + "33" : colors.panelBorder }}>
+          <Card key={t.id} onClick={() => {
+              if (generatingId) return; // prevent concurrent generation of the same / a different policy
+              if (!gen[t.id]) genPolicy(t.id);
+              setSel(t.id);
+            }}
+            style={{ cursor: generatingId ? "wait" : "pointer", borderColor: gen[t.id] ? colors.green + "33" : colors.panelBorder, opacity: generatingId && generatingId !== t.id ? 0.6 : 1 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <span style={{ fontSize: 24 }}>{t.i}</span>
-              {gen[t.id] ? <Badge color={colors.green}>Generated</Badge> : <Badge color={colors.textDim}>Click to generate</Badge>}
+              {generatingId === t.id ? <Badge color={colors.teal}>Generating…</Badge>
+                : gen[t.id] ? <Badge color={colors.green}>Generated</Badge>
+                : <Badge color={colors.textDim}>Click to generate</Badge>}
             </div>
             <h4 style={{ color: colors.white, margin: "10px 0 4px", fontSize: 13 }}>{t.n}</h4>
             <p style={{ color: colors.textMuted, fontSize: 10, margin: 0, lineHeight: 1.4 }}>{t.d}</p>

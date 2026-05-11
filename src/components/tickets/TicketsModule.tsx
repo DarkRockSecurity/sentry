@@ -34,7 +34,19 @@ export function TicketsModule() {
                 const txt = `SENTRY TICKET\nID: ${tk.id}\nTitle: ${tk.title}\nSeverity: ${tk.severity}\nStatus: ${tk.status}\nAssignee: ${tk.assignee || "Unassigned"}\nCreated: ${tk.created}\n\nDetails:\n${tk.details || "None"}\n`;
                 const blob = new Blob([txt], { type: "text/plain" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `Sentry-Ticket-${tk.id}.txt`; a.click();
               }}>Export</Button>
-              <Select value={tk.status} onChange={(v) => updateTicket(tk.id, { status: v })} options={["Open", "In Progress", "Contained", "Resolved", "Closed"]} />
+              <Select value={tk.status} onChange={async (v) => {
+                // Closing or re-opening a ticket has reporting consequences — confirm.
+                if ((v === "Closed" || (tk.status === "Closed" && v !== "Closed")) && v !== tk.status) {
+                  const ok = await modal.showConfirm(
+                    v === "Closed" ? "Close this ticket?" : "Re-open this ticket?",
+                    v === "Closed"
+                      ? "Closing locks the timeline and feeds MTTR. You can re-open later if needed."
+                      : "Re-opening will reset the close timestamp and remove this ticket from MTTR calculations.",
+                  );
+                  if (!ok) return;
+                }
+                updateTicket(tk.id, { status: v });
+              }} options={["Open", "In Progress", "Contained", "Resolved", "Closed"]} />
             </div>
           </div>
         </Card>

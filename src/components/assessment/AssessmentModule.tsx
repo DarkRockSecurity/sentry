@@ -333,7 +333,17 @@ export function AssessmentModule() {
             {activeFn > 0 && <Button variant="secondary" size="sm" onClick={() => setActiveFn((p) => p - 1)}>← Prev</Button>}
             {activeFn < CSF2.length - 1 && <Button variant="secondary" size="sm" onClick={() => setActiveFn((p) => p + 1)}>Next →</Button>}
           </div>
-          <Button onClick={submitAssessment} disabled={aCnt < allQs.length * 0.3}>Submit Assessment ({aCnt}/{allQs.length})</Button>
+          {(() => {
+            const minRequired = Math.ceil(allQs.length * 0.3);
+            const eligible = aCnt >= minRequired;
+            return (
+              <Button onClick={submitAssessment} disabled={!eligible}>
+                {eligible
+                  ? `Submit Assessment (${aCnt}/${allQs.length})`
+                  : `Need ${minRequired - aCnt} more answers (${aCnt}/${allQs.length})`}
+              </Button>
+            );
+          })()}
         </div>
       </div>
     </div>

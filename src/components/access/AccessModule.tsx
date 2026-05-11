@@ -37,7 +37,7 @@ export function AccessModule() {
       addTeamMember({ name: r.name, email: r.email, role: r.role || "Analyst", active: true });
       const res = await addTeamMemberAction({ email: r.email, fullName: r.name, role });
       if (!res.ok) {
-        await modal.showAlert("Invite failed", res.error);
+        await modal.showAlert("Invite failed", res.error ?? "The invite could not be sent. Check the email address and try again.");
         return;
       }
       await modal.showAlert(
@@ -74,10 +74,10 @@ export function AccessModule() {
           const roleColor = getRoleColor(m.role);
           return (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", gap: 8, padding: "8px 0", borderBottom: `1px solid ${colors.panelBorder}`, alignItems: "center" }}>
-              <div>
+              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m.name}>
                 <span style={{ color: colors.white, fontSize: 11, fontWeight: 600 }}>{m.name}</span>
               </div>
-              <span style={{ color: colors.textMuted, fontSize: 10 }}>{m.email}</span>
+              <span style={{ color: colors.textMuted, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m.email}>{m.email}</span>
               <Badge color={roleColor}>{m.role}</Badge>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: m.active ? colors.green : colors.red }} />

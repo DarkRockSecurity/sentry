@@ -125,14 +125,19 @@ export function PlaybooksModule() {
     const phaseToIR: Record<string, string> = { iocs: "ident", contain: "contain", erad: "erad", recover: "recover" };
     const incidentId = `INC-${caseId}`;
 
+    // Counter-stamped IDs guarantee uniqueness across phases within one playbook
+    // activation. Previous formula (caseId + i + charCode) could collide because
+    // the offsets between phase charCodes (i, c, e, r → 99, 101, 105, 114) were
+    // small enough for adjacent step indexes to land on the same id.
+    let stepCounter = 0;
     const subtasks = [
       { k: "iocs", l: "IOC Verification", d: pb.iocs },
       { k: "contain", l: "Containment", d: pb.contain },
       { k: "erad", l: "Eradication", d: pb.erad },
       { k: "recover", l: "Recovery", d: pb.recover },
     ].flatMap((phase) =>
-      phase.d.map((step, i) => ({
-        id: caseId + i + phase.k.charCodeAt(0),
+      phase.d.map((step) => ({
+        id: caseId * 1000 + ++stepCounter,
         title: `[${phase.l}] ${step}`,
         priority: (phase.k === "contain" ? "Critical" : phase.k === "erad" ? "High" : "Medium") as "Critical" | "High" | "Medium",
         status: "Backlog" as const,
