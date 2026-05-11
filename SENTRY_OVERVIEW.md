@@ -11,7 +11,7 @@ This is the context doc. The tactical DNS work is in a separate file (**`DNS_REC
 
 A multi-tenant SaaS cyber-resilience platform. Eighteen modules, full multi-tenant data isolation (RLS at Postgres, not just app-level), Supabase Auth + Postgres + Storage, deployed on Vercel.
 
-- **Repo:** `github.com/drcalexbates26/sentry` (private, on `master`)
+- **Repo:** `github.com/DarkRockSecurity/sentry` (private, on `master`)
 - **Current live URL:** `sentry-ruby-sigma.vercel.app`
 - **After DNS work:** `sentry.darkrocklabs.com`
 - **Vercel project:** `drcalexbates26s-projects/sentry`
@@ -126,7 +126,7 @@ Open `vercel.com/drcalexbates26s-projects/sentry/settings/environment-variables`
 
 ## Where to find me
 
-- Code: `github.com/drcalexbates26/sentry`
+- Code: `github.com/DarkRockSecurity/sentry`
 - Live (current): `https://sentry-ruby-sigma.vercel.app`
 - Live (after DNS): `https://sentry.darkrocklabs.com`
 - Support: `support@darkrocksecurity.com`

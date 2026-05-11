@@ -3,7 +3,6 @@
 
 > **Org:** DarkRockSecurity
 > **Repo:** github.com/DarkRockSecurity/sentry
-> **Dev:** github.com/drcalexbates26/sentry
 > **Version:** 3.1.0
 
 ---
