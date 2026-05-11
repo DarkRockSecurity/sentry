@@ -6,10 +6,11 @@ import { Badge, Button, Card, SectionHeader, useModal } from "@/components/ui";
 import { POLICY_TEMPLATES } from "@/data/policy-templates";
 import { PolicyEditor } from "./PolicyEditor";
 import {
-  listPolicies, generatePolicyDraft, savePolicyDraft,
+  listPolicies, listPolicyApprovers,
+  generatePolicyDraft, savePolicyDraft,
   submitPolicyForReview, signOffPolicy, publishPolicy,
   startNewPolicyVersion, discardPolicyDraft,
-  type PolicyDTO, type PolicyVersionDTO,
+  type PolicyDTO, type PolicyVersionDTO, type ApproverCandidate,
 } from "@/app/app/_actions";
 
 type Tab = "templates" | "drafts" | "live";
@@ -18,6 +19,7 @@ export function PoliciesModule() {
   const colors = useColors();
   const modal = useModal();
   const [policies, setPolicies] = useState<PolicyDTO[]>([]);
+  const [approvers, setApprovers] = useState<ApproverCandidate[]>([]);
   const [tab, setTab] = useState<Tab>("templates");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
@@ -25,11 +27,49 @@ export function PoliciesModule() {
   const [, startAction] = useTransition();
 
   const refresh = useCallback(async () => {
-    const fresh = await listPolicies();
-    setPolicies(fresh);
+    const [freshPolicies, freshApprovers] = await Promise.all([listPolicies(), listPolicyApprovers()]);
+    setPolicies(freshPolicies);
+    setApprovers(freshApprovers);
   }, []);
 
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
+
+  /** Opens a modal that lists every other active platform user, asks the
+   *  submitter to pick one, and submits the policy for review. */
+  const submitForReview = useCallback(async (templateId: string) => {
+    const candidates = approvers.filter((a) => !a.isSelf);
+    if (candidates.length === 0) {
+      await modal.showAlert(
+        "No approvers available",
+        "There are no other active platform users in this tenant who can approve. Invite a colleague from the Access Control module, then try again.",
+      );
+      return;
+    }
+    const labelForCandidate = (a: ApproverCandidate) => `${a.name} · ${a.email}`;
+    const r = await modal.showPrompt(
+      "Submit for Approval",
+      [{
+        key: "approver",
+        label: "Named Approver (required)",
+        type: "select",
+        required: true,
+        options: candidates.map(labelForCandidate),
+      }],
+      "Choose one platform user to approve this policy version. You cannot name yourself. The named approver is the only person who can sign off — and once they do, the version is publishable.",
+    );
+    if (!r) return;
+    const picked = candidates.find((a) => labelForCandidate(a) === r.approver);
+    if (!picked) {
+      await modal.showAlert("Approver missing", "Pick an approver from the list to submit.");
+      return;
+    }
+    handle(
+      `review:${templateId}`,
+      { title: "Submitted for approval", body: `Awaiting signoff from ${picked.name}. They will see the policy in their Drafts in Flight queue.` },
+      () => submitPolicyForReview({ templateId, approverUserId: picked.userId }),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvers]);
 
   // Helpers --------------------------------------------------------------
   const findByTemplate = (templateId: string) => policies.find((p) => p.templateId === templateId);
@@ -124,8 +164,9 @@ export function PoliciesModule() {
                 policy={policy!}
                 version={activeVersion}
                 busyId={busyId}
-                onSubmit={() => handle(`review:${tpl.id}`, { title: "Submitted for review", body: "Two distinct admin signoffs are required before publication." }, () => submitPolicyForReview(tpl.id))}
-                onSignOff={() => handle(`sign:${tpl.id}`, null, () => signOffPolicy(tpl.id))}
+                approvers={approvers}
+                onSubmit={() => submitForReview(tpl.id)}
+                onSignOff={() => handle(`sign:${tpl.id}`, { title: "Approval recorded", body: "You may now publish, or another admin can." }, () => signOffPolicy(tpl.id))}
                 onPublish={() => handle(`pub:${tpl.id}`, { title: "Policy published", body: "The version is now live across the tenant." }, () => publishPolicy(tpl.id))}
                 onDiscard={async () => {
                   const ok = await modal.showConfirm("Discard this draft?", "This deletes the working draft. The published version (if any) remains live.", "danger");
@@ -149,15 +190,33 @@ export function PoliciesModule() {
           />
         )}
 
-        {/* Signoff record (when in review) */}
+        {/* Approval record (when in review) */}
         {inReview && (
           <Card style={{ marginTop: 14, borderLeft: `3px solid ${colors.orange}` }}>
-            <h3 style={{ color: colors.white, margin: 0, fontSize: 13 }}>Signoff record</h3>
+            <h3 style={{ color: colors.white, margin: 0, fontSize: 13 }}>Approval record</h3>
             <p style={{ color: colors.textMuted, fontSize: 11, margin: "4px 0 10px", lineHeight: 1.5 }}>
-              Two distinct tenant admins must sign off before this version can be published. You cannot sign off twice for the same version.
+              Submission counts as the submitter's signoff. The named approver — chosen at submission — is the only person who can record the approval. Once they sign, the policy is publishable.
             </p>
-            <SignoffRow label="Signoff 1" signoff={inReview.signoff1} colors={colors} />
-            <SignoffRow label="Signoff 2" signoff={inReview.signoff2} colors={colors} />
+            <SignoffRowKV
+              label="Submitted by"
+              value={inReview.submittedBy ? `${inReview.submittedBy.name} · ${new Date(inReview.submittedBy.at).toLocaleString()}` : "—"}
+              colors={colors}
+              good={!!inReview.submittedBy}
+            />
+            <SignoffRowKV
+              label="Named approver"
+              value={inReview.approver?.name ?? "—"}
+              colors={colors}
+              good={!!inReview.approver}
+            />
+            <SignoffRowKV
+              label="Approver signoff"
+              value={inReview.approverSignedAt
+                ? `✓ ${inReview.approver?.name ?? "Approver"} · ${new Date(inReview.approverSignedAt).toLocaleString()}`
+                : `Awaiting ${inReview.approver?.name ?? "approver"}`}
+              colors={colors}
+              good={!!inReview.approverSignedAt}
+            />
           </Card>
         )}
 
@@ -297,12 +356,14 @@ export function PoliciesModule() {
                           {v.changesSummary || "No change summary yet."}
                         </div>
                         {v.status === "in_review" && (
-                          <div style={{ display: "flex", gap: 14, marginTop: 6 }}>
-                            <span style={{ color: v.signoff1 ? colors.green : colors.textDim, fontSize: 10 }}>
-                              {v.signoff1 ? `✓ ${v.signoff1.name}` : "Awaiting signoff 1"}
+                          <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
+                            <span style={{ color: v.submittedBy ? colors.green : colors.textDim, fontSize: 10 }}>
+                              {v.submittedBy ? `✓ Submitted by ${v.submittedBy.name}` : "Awaiting submission"}
                             </span>
-                            <span style={{ color: v.signoff2 ? colors.green : colors.textDim, fontSize: 10 }}>
-                              {v.signoff2 ? `✓ ${v.signoff2.name}` : "Awaiting signoff 2"}
+                            <span style={{ color: v.approverSignedAt ? colors.green : colors.textDim, fontSize: 10 }}>
+                              {v.approverSignedAt
+                                ? `✓ Approved by ${v.approver?.name ?? "approver"}`
+                                : `Awaiting approval from ${v.approver?.name ?? "named approver"}`}
                             </span>
                           </div>
                         )}
@@ -343,8 +404,8 @@ export function PoliciesModule() {
                         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 14, rowGap: 3, fontSize: 10, color: colors.textMuted, maxWidth: 720 }}>
                           <span style={{ color: colors.textDim }}>Went live</span><span>{new Date(v.publishedAt!).toLocaleString()}</span>
                           <span style={{ color: colors.textDim }}>Published by</span><span>{v.publishedBy?.name ?? "—"}</span>
-                          {v.signoff1 && <><span style={{ color: colors.textDim }}>Reviewer 1</span><span>{v.signoff1.name} · {new Date(v.signoff1.at).toLocaleString()}</span></>}
-                          {v.signoff2 && <><span style={{ color: colors.textDim }}>Reviewer 2</span><span>{v.signoff2.name} · {new Date(v.signoff2.at).toLocaleString()}</span></>}
+                          {v.submittedBy && <><span style={{ color: colors.textDim }}>Submitted by</span><span>{v.submittedBy.name} · {new Date(v.submittedBy.at).toLocaleString()}</span></>}
+                          {v.approver && v.approverSignedAt && <><span style={{ color: colors.textDim }}>Approved by</span><span>{v.approver.name} · {new Date(v.approverSignedAt).toLocaleString()}</span></>}
                         </div>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -403,23 +464,22 @@ function StatTile({ label, value, color, sub }: { label: string; value: number; 
   );
 }
 
-function SignoffRow({ label, signoff, colors }: { label: string; signoff: PolicyVersionDTO["signoff1"]; colors: ReturnType<typeof useColors> }) {
+function SignoffRowKV({ label, value, colors, good }: { label: string; value: string; colors: ReturnType<typeof useColors>; good?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: `1px solid ${colors.panelBorder}` }}>
       <span style={{ color: colors.textMuted, fontSize: 11 }}>{label}</span>
-      <span style={{ color: signoff ? colors.green : colors.textDim, fontSize: 11 }}>
-        {signoff ? `✓ ${signoff.name} · ${new Date(signoff.at).toLocaleString()}` : "Awaiting signoff"}
-      </span>
+      <span style={{ color: good ? colors.green : colors.textDim, fontSize: 11 }}>{value}</span>
     </div>
   );
 }
 
 function PolicyActions({
-  policy, version, busyId, onSubmit, onSignOff, onPublish, onDiscard, onStartNewVersion,
+  policy, version, busyId, approvers, onSubmit, onSignOff, onPublish, onDiscard, onStartNewVersion,
 }: {
   policy: PolicyDTO;
   version: PolicyVersionDTO;
   busyId: string | null;
+  approvers: ApproverCandidate[];
   onSubmit: () => void;
   onSignOff: () => void;
   onPublish: () => void;
@@ -427,14 +487,16 @@ function PolicyActions({
   onStartNewVersion: () => void;
 }) {
   const tplId = policy.templateId;
-  const bothSigned = !!version.signoff1 && !!version.signoff2;
+  const me = approvers.find((a) => a.isSelf);
+  const isNamedApprover = !!(version.approver && me && version.approver.userId === me.userId);
+  const approved = !!version.approverSignedAt;
 
   if (version.status === "draft") {
     return (
       <>
         <Button size="sm" variant="ghost" onClick={onDiscard} disabled={busyId === `disc:${tplId}`}>Discard</Button>
         <Button size="sm" onClick={onSubmit} disabled={busyId === `review:${tplId}`}>
-          {busyId === `review:${tplId}` ? "Submitting…" : "Submit for Review"}
+          {busyId === `review:${tplId}` ? "Submitting…" : "Submit for Approval"}
         </Button>
       </>
     );
@@ -442,10 +504,19 @@ function PolicyActions({
   if (version.status === "in_review") {
     return (
       <>
-        <Button size="sm" variant="outline" onClick={onSignOff} disabled={bothSigned || busyId === `sign:${tplId}`}>
-          {bothSigned ? "Both signed" : busyId === `sign:${tplId}` ? "Signing…" : "Sign Off"}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onSignOff}
+          disabled={!isNamedApprover || approved || busyId === `sign:${tplId}`}
+        >
+          {approved
+            ? `✓ Approved`
+            : !isNamedApprover
+              ? `Approval pending (${version.approver?.name ?? "approver"})`
+              : busyId === `sign:${tplId}` ? "Signing…" : "Sign Off as Approver"}
         </Button>
-        <Button size="sm" onClick={onPublish} disabled={!bothSigned || busyId === `pub:${tplId}`}>
+        <Button size="sm" onClick={onPublish} disabled={!approved || busyId === `pub:${tplId}`}>
           {busyId === `pub:${tplId}` ? "Publishing…" : "Publish"}
         </Button>
       </>

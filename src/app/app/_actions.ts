@@ -1146,13 +1146,25 @@ export interface PolicyVersionDTO {
   content: string;
   status: PolicyVersionStatus;
   changesSummary: string | null;
-  signoff1: { userId: string; name: string; at: string } | null;
-  signoff2: { userId: string; name: string; at: string } | null;
+  /** Captured when the submitter clicks "Submit for Review" — counts as the first signoff. */
+  submittedBy: { userId: string; name: string; at: string } | null;
+  /** The named approver chosen at submit time. */
+  approver: { userId: string; name: string } | null;
+  /** When the named approver actually signed off (null until they do). */
+  approverSignedAt: string | null;
   publishedAt: string | null;
   publishedBy: { userId: string; name: string } | null;
   createdBy: { userId: string; name: string };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ApproverCandidate {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  isSelf: boolean;
 }
 
 export interface PolicyDTO {
@@ -1170,8 +1182,8 @@ export interface PolicyDTO {
 function toVersionDTO(v: {
   id: string; policyId: string; versionNumber: number; content: string;
   status: string; changesSummary: string | null;
-  signoff1UserId: string | null; signoff1Name: string | null; signoff1At: Date | null;
-  signoff2UserId: string | null; signoff2Name: string | null; signoff2At: Date | null;
+  submitterUserId: string | null; submitterName: string | null; submittedAt: Date | null;
+  approverUserId: string | null; approverName: string | null; approverSignedAt: Date | null;
   publishedAt: Date | null; publishedByUserId: string | null; publishedByName: string | null;
   createdByUserId: string; createdByName: string | null;
   createdAt: Date; updatedAt: Date;
@@ -1184,14 +1196,41 @@ function toVersionDTO(v: {
     content: v.content,
     status: v.status as PolicyVersionStatus,
     changesSummary: v.changesSummary,
-    signoff1: v.signoff1UserId && v.signoff1At ? { userId: v.signoff1UserId, name: v.signoff1Name ?? "", at: v.signoff1At.toISOString() } : null,
-    signoff2: v.signoff2UserId && v.signoff2At ? { userId: v.signoff2UserId, name: v.signoff2Name ?? "", at: v.signoff2At.toISOString() } : null,
+    submittedBy: v.submitterUserId && v.submittedAt
+      ? { userId: v.submitterUserId, name: v.submitterName ?? "", at: v.submittedAt.toISOString() }
+      : null,
+    approver: v.approverUserId
+      ? { userId: v.approverUserId, name: v.approverName ?? "" }
+      : null,
+    approverSignedAt: v.approverSignedAt?.toISOString() ?? null,
     publishedAt: v.publishedAt?.toISOString() ?? null,
     publishedBy: v.publishedByUserId ? { userId: v.publishedByUserId, name: v.publishedByName ?? "" } : null,
     createdBy: { userId: v.createdByUserId, name: v.createdByName ?? "" },
     createdAt: v.createdAt.toISOString(),
     updatedAt: v.updatedAt.toISOString(),
   };
+}
+
+/**
+ * List candidate approvers — every active user in the tenant other than the
+ * caller (a submitter cannot approve their own policy). Drives the
+ * "Submit for Review" dialog dropdown.
+ */
+export async function listPolicyApprovers(): Promise<ApproverCandidate[]> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const rows = await prisma.user.findMany({
+    where: { tenantId, active: true },
+    select: { id: true, fullName: true, email: true, role: true },
+    orderBy: [{ fullName: "asc" }, { email: "asc" }],
+  });
+  return rows.map((u) => ({
+    userId: u.id,
+    name: u.fullName ?? u.email,
+    email: u.email,
+    role: u.role,
+    isSelf: u.id === session.authId,
+  }));
 }
 
 async function loadPolicyContext(tenantId: string): Promise<PolicyContext> {
@@ -1323,20 +1362,53 @@ export async function savePolicyDraft(input: { templateId: string; content: stri
   return { ok: true };
 }
 
-/** Transition the draft from `draft` → `in_review` (locks editing). */
-export async function submitPolicyForReview(templateId: string): Promise<{ ok: boolean; error?: string }> {
+/**
+ * Submit a draft for review. The submitter names a single approver from the
+ * pool of active platform users in the tenant. The submitter cannot name
+ * themselves. The submission counts as the submitter's implicit signoff.
+ */
+export async function submitPolicyForReview(input: { templateId: string; approverUserId: string }): Promise<{ ok: boolean; error?: string }> {
   const session = await requireUser();
   const tenantId = session.activeTenantId ?? session.user!.tenantId;
-  const policy = await prisma.policy.findUnique({ where: { id: policyId(tenantId, templateId) } });
+  const callerRole = session.user!.role;
+  if (callerRole !== "tenant_admin" && callerRole !== "super_admin") {
+    return { ok: false, error: "Only tenant admins can submit policies for review." };
+  }
+  if (!input.approverUserId) return { ok: false, error: "Choose an approver before submitting." };
+  if (input.approverUserId === session.authId) return { ok: false, error: "You cannot name yourself as the approver. Pick another platform user." };
+
+  const approver = await prisma.user.findFirst({
+    where: { id: input.approverUserId, tenantId, active: true },
+    select: { id: true, fullName: true, email: true },
+  });
+  if (!approver) return { ok: false, error: "The selected approver is not an active user in this tenant." };
+
+  const policy = await prisma.policy.findUnique({ where: { id: policyId(tenantId, input.templateId) } });
   if (!policy?.draftVersionId) return { ok: false, error: "No draft to submit." };
   const draft = await prisma.policyVersion.findUnique({ where: { id: policy.draftVersionId } });
   if (!draft || draft.status !== "draft") return { ok: false, error: "Draft is no longer in editable state." };
-  await prisma.policyVersion.update({ where: { id: draft.id }, data: { status: "in_review" } });
+
+  const submitterName = session.user!.fullName ?? session.user!.email ?? "Unknown";
+  const approverName = approver.fullName ?? approver.email;
+  await prisma.policyVersion.update({
+    where: { id: draft.id },
+    data: {
+      status: "in_review",
+      submitterUserId: session.authId,
+      submitterName,
+      submittedAt: new Date(),
+      approverUserId: approver.id,
+      approverName,
+    },
+  });
   revalidatePath("/app");
   return { ok: true };
 }
 
-/** Capture one signoff. Two distinct signoffs are required to publish. */
+/**
+ * Sign off as the named approver. Only the user named at submit time can
+ * sign off. The submitter cannot self-approve.
+ */
 export async function signOffPolicy(templateId: string): Promise<{ ok: boolean; error?: string }> {
   const session = await requireUser();
   const tenantId = session.activeTenantId ?? session.user!.tenantId;
@@ -1349,34 +1421,25 @@ export async function signOffPolicy(templateId: string): Promise<{ ok: boolean; 
   const v = await prisma.policyVersion.findUnique({ where: { id: policy.draftVersionId } });
   if (!v) return { ok: false, error: "Version missing." };
   if (v.status !== "in_review") return { ok: false, error: "Policy is not in review." };
-
-  const userId = session.authId;
-  const userName = session.user!.fullName ?? session.user!.email ?? "Unknown";
-  const at = new Date();
-
-  if (v.signoff1UserId === userId || v.signoff2UserId === userId) {
-    return { ok: false, error: "You have already signed off this version. Two distinct signoffs are required." };
+  if (!v.approverUserId) return { ok: false, error: "No approver was named at submission. Discard and resubmit." };
+  if (v.approverUserId !== session.authId) {
+    return { ok: false, error: `Only the named approver (${v.approverName ?? "—"}) can sign off this version.` };
   }
+  if (v.approverSignedAt) return { ok: false, error: "This version has already been signed off." };
 
-  if (!v.signoff1UserId) {
-    await prisma.policyVersion.update({
-      where: { id: v.id },
-      data: { signoff1UserId: userId, signoff1Name: userName, signoff1At: at },
-    });
-  } else if (!v.signoff2UserId) {
-    await prisma.policyVersion.update({
-      where: { id: v.id },
-      data: { signoff2UserId: userId, signoff2Name: userName, signoff2At: at },
-    });
-  } else {
-    return { ok: false, error: "Already fully signed. Publish to make it live." };
-  }
+  await prisma.policyVersion.update({
+    where: { id: v.id },
+    data: { approverSignedAt: new Date() },
+  });
   revalidatePath("/app");
   return { ok: true };
 }
 
-/** Publish — requires two signoffs in place. Locks the version, makes it
- *  the new publishedVersion, archives any previous published version. */
+/**
+ * Publish — requires the named approver to have signed off. Locks the
+ * version, makes it the new publishedVersion, archives any previous
+ * published version.
+ */
 export async function publishPolicy(templateId: string): Promise<{ ok: boolean; error?: string }> {
   const session = await requireUser();
   const tenantId = session.activeTenantId ?? session.user!.tenantId;
@@ -1388,8 +1451,9 @@ export async function publishPolicy(templateId: string): Promise<{ ok: boolean; 
   if (!policy?.draftVersionId) return { ok: false, error: "Nothing to publish." };
   const v = await prisma.policyVersion.findUnique({ where: { id: policy.draftVersionId } });
   if (!v) return { ok: false, error: "Version missing." };
-  if (v.status !== "in_review") return { ok: false, error: "Version must be in review with both signoffs before publishing." };
-  if (!v.signoff1UserId || !v.signoff2UserId) return { ok: false, error: "Two distinct signoffs are required before publishing." };
+  if (v.status !== "in_review") return { ok: false, error: "Version must be in review and signed off before publishing." };
+  if (!v.submitterUserId) return { ok: false, error: "Missing submitter record. Discard and resubmit." };
+  if (!v.approverSignedAt) return { ok: false, error: `Waiting for ${v.approverName ?? "the named approver"} to sign off.` };
 
   const userName = session.user!.fullName ?? session.user!.email ?? "Unknown";
   const at = new Date();

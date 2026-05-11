@@ -290,7 +290,8 @@ model Policy {
 
 model PolicyVersion {
   // Append-only version log. Draft = editable. Published = immutable.
-  // Two distinct signoffs required to transition in_review → published.
+  // Submitter implicitly signs off at submission; an explicitly-named
+  // approver must subsequently sign off before publication.
   id                  String   @id
   policyId            String
   policy              Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
@@ -298,14 +299,16 @@ model PolicyVersion {
   content             String   @db.Text  // markdown
   status              String   // "draft" | "in_review" | "published" | "archived"
   changesSummary      String?  // optional changelog note
-  // Two-signoff workflow — userId snapshots are captured so historical
-  // records survive if a user is later removed.
-  signoff1UserId      String?
-  signoff1Name        String?
-  signoff1At          DateTime?
-  signoff2UserId      String?
-  signoff2Name        String?
-  signoff2At          DateTime?
+  // Submission (= first signoff, captured automatically at submit-for-review)
+  submitterUserId     String?
+  submitterName       String?
+  submittedAt         DateTime?
+  // Named approver — must be a distinct platform user. Captured at submit time.
+  approverUserId      String?
+  approverName        String?
+  // Approver signoff (= second signoff, captured when the named approver
+  // clicks "Sign off").
+  approverSignedAt    DateTime?
   // Publication
   publishedAt         DateTime?
   publishedByUserId   String?
