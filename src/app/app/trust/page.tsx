@@ -52,14 +52,6 @@ const SUBPROCESSORS: Subprocessor[] = [
     url: "https://resend.com/security",
   },
   {
-    name: "Cloudflare",
-    category: "DNS & DDoS Mitigation",
-    purpose: "DNS resolution for production domains, edge DDoS protection, bot mitigation.",
-    region: "United States · Global anycast network",
-    contractType: "Standard contractual clauses · ISO 27001 / SOC 2 Type II",
-    url: "https://www.cloudflare.com/trust-hub/",
-  },
-  {
     name: "GitHub",
     category: "Source Control & CI",
     purpose: "Stores the Sentry application source code. No customer data flows through GitHub.",
