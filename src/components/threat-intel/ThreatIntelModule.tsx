@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useColors } from "@/lib/theme";
 import { useStore } from "@/store";
 import { Badge, Button, Card, Input, Select, SectionHeader, ScoreGauge } from "@/components/ui";
-import { GLOBAL_FEEDS, getIndustryFeeds } from "@/lib/threat-intel/feed-config";
+import { GLOBAL_FEEDS } from "@/lib/threat-intel/feed-config";
 import { generateExecutiveSummary, generateRecommendations } from "@/lib/threat-intel/summary-generator";
 import { refreshThreatIntelAction } from "@/app/app/_actions";
 import type { ThreatIntelItem } from "@/types/threat-intel";
@@ -128,6 +128,34 @@ export function ThreatIntelModule() {
     }
     setThreatIntelLoading(false);
   }, [tab, org.industry, setThreatIntelItems, setThreatIntelLoading]);
+
+  // Auto-pull on first mount. If the store has no items (cold open) AND the
+  // industry tab has just become available, kick a server-driven refresh so
+  // the user lands on a populated page instead of an empty state.
+  const autoPulledRef = useRef(false);
+  useEffect(() => {
+    if (autoPulledRef.current) return;
+    if (threatIntelLoading) return;
+    if (threatIntelItems.length === 0) {
+      autoPulledRef.current = true;
+      void fetchFeeds(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // When the user switches the industry tab and we have no industry-tagged
+  // items yet, fire one more pull. This makes "have it pull when it generates"
+  // work for tenants that just set their industry in Onboarding.
+  const industryPulledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (tab !== "industry" || !org.industry) return;
+    if (industryPulledFor.current === org.industry) return;
+    const haveIndustryItems = threatIntelItems.some((i) => i.feedCategory === "industry" || i.industryTag === org.industry);
+    if (!haveIndustryItems && !threatIntelLoading) {
+      industryPulledFor.current = org.industry;
+      void fetchFeeds(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, org.industry]);
 
   // Filtered items
   const items = useMemo(() => {
@@ -379,7 +407,6 @@ export function ThreatIntelModule() {
   }
 
   // ═══ MAIN DASHBOARD ═══════════════════════════════════════════════
-  const industryFeeds = org.industry ? getIndustryFeeds(org.industry) : [];
 
   return (
     <div>
@@ -400,29 +427,6 @@ export function ThreatIntelModule() {
           </Button>
         </div>
       </div>
-
-      {/* Industry sources info */}
-      {tab === "industry" && org.industry && (
-        <Card style={{ marginBottom: 14, borderLeft: `3px solid ${colors.teal}`, padding: 14 }}>
-          <div style={{ fontSize: 9, color: colors.teal, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Sector Sources: {org.industry}</div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {industryFeeds.map((f) => (
-              <div key={f.name}>
-                {f.requiresMembership
-                  ? <Badge color={colors.textDim}>{f.name} (membership required)</Badge>
-                  : <Badge color={colors.teal}>{f.name}</Badge>
-                }
-              </div>
-            ))}
-            {industryFeeds.length === 0 && <span style={{ color: colors.textDim, fontSize: 10 }}>Using global feeds with industry keyword filtering.</span>}
-          </div>
-          {industryFeeds.filter((f) => f.requiresMembership).map((f) => (
-            <div key={f.name} style={{ marginTop: 6, color: colors.textDim, fontSize: 9 }}>
-              Join <strong style={{ color: colors.teal }}>{f.membershipOrg}</strong> for enhanced sector intelligence
-            </div>
-          ))}
-        </Card>
-      )}
 
       {/* Summary Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>

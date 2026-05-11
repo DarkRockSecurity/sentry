@@ -73,7 +73,12 @@ export const INDUSTRY_FEEDS: Record<string, FeedSource[]> = {
   ],
   "Technology": [
     { name: "GitHub Security Blog",     url: "https://github.blog/category/security/feed/",                    type: "rss", category: "industry", industryTag: "Technology" },
-    { name: "Dark Reading App Sec",     url: "https://www.darkreading.com/rss.xml",                            type: "rss", category: "industry", industryTag: "Technology" },
+    { name: "Snyk Security",            url: "https://snyk.io/blog/feed/",                                     type: "rss", category: "industry", industryTag: "Technology" },
+    { name: "Trail of Bits",            url: "https://blog.trailofbits.com/feed.xml",                          type: "rss", category: "industry", industryTag: "Technology" },
+    { name: "HackerOne",                url: "https://www.hackerone.com/blog/rss.xml",                         type: "rss", category: "industry", industryTag: "Technology" },
+    { name: "Schneier on Security",     url: "https://www.schneier.com/feed/atom/",                            type: "rss", category: "industry", industryTag: "Technology" },
+    { name: "Google Project Zero",      url: "https://googleprojectzero.blogspot.com/feeds/posts/default",     type: "rss", category: "industry", industryTag: "Technology" },
+    { name: "PortSwigger Daily Swig",   url: "https://portswigger.net/daily-swig/rss",                         type: "rss", category: "industry", industryTag: "Technology" },
   ],
   "Manufacturing": [
     { name: "CISA ICS Advisories",      url: "https://www.cisa.gov/cybersecurity-advisories/ics-advisories.xml", type: "rss", category: "industry", industryTag: "Manufacturing" },
