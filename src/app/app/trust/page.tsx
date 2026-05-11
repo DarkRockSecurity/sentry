@@ -100,7 +100,6 @@ export default async function InAppTrustPage() {
           <Tile label="Multi-tenant isolation" value="Postgres RLS" tone={colors.green} sub="Row-level security policies enforced at the DB layer, not just app layer." />
           <Tile label="Authentication" value="Supabase Auth + MFA" tone={colors.green} sub="MFA enforced for admin accounts." />
           <Tile label="Backups" value="Daily · 7-day PITR" tone={colors.green} />
-          <Tile label="SOC 2" value="Type II in progress" tone={colors.orange} sub="Target completion Q4 2026." />
         </section>
 
         {/* Sub-processor list */}
@@ -143,31 +142,16 @@ export default async function InAppTrustPage() {
           </div>
         </section>
 
-        {/* Compliance roadmap */}
-        <section style={{ marginBottom: 24 }}>
-          <h2 style={{ color: colors.text, fontSize: 18, fontWeight: 700, margin: "0 0 6px", fontFamily: "Figtree, sans-serif" }}>Compliance posture</h2>
-          <div style={{ background: colors.panel, border: `1px solid ${colors.panelBorder}`, borderRadius: 12, padding: "18px 20px" }}>
-            <RoadmapRow title="GDPR / UK GDPR" status="In place" tone={colors.green} note="DPA available · sub-processor change-notification process · data-subject rights handled by Privacy Officer." />
-            <RoadmapRow title="CCPA / CPRA" status="In place" tone={colors.green} note="Privacy policy covers consumer rights. We do not sell personal data." />
-            <RoadmapRow title="SOC 2 Type II" status="In progress" tone={colors.orange} note="Observation window underway. Target completion Q4 2026 via Drata / Vanta tooling." />
-            <RoadmapRow title="ISO 27001" status="Planned" tone={colors.textDim} note="Most controls map from SOC 2; certification audit targeted Q1 2027." />
-            <RoadmapRow title="HIPAA" status="BAA available" tone={colors.green} note="Signed BAA available for Enterprise tenants. Supabase + Vercel sub-processor BAAs required on enterprise plans." />
-            <RoadmapRow title="FedRAMP" status="Not in scope" tone={colors.textDim} note="Requires GovCloud + US-citizen-only ops team. Roadmap horizon ≥ 18 months." />
-          </div>
-        </section>
-
         {/* Reporting + contact */}
         <section style={{ background: colors.panel, border: `1px solid ${colors.panelBorder}`, borderRadius: 12, padding: "18px 20px" }}>
           <h2 style={{ color: colors.text, fontSize: 16, fontWeight: 700, margin: "0 0 6px", fontFamily: "Figtree, sans-serif" }}>Reporting a security issue</h2>
           <p style={{ color: colors.textMuted, fontSize: 12, margin: "0 0 10px", lineHeight: 1.65 }}>
             We welcome reports from the security community. Email{" "}
-            <a href="mailto:security@darkrocksecurity.com" style={{ color: colors.teal }}>security@darkrocksecurity.com</a>{" "}
+            <a href="mailto:support@darkrocksecurity.com" style={{ color: colors.teal }}>support@darkrocksecurity.com</a>{" "}
             with reproduction steps. We acknowledge within 2 business days and provide a status update within 7 days. Good-faith researchers following responsible disclosure are protected.
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Pill label="Security disclosures" value="security@darkrocksecurity.com" />
-            <Pill label="Trust portal & DPA requests" value="trust@darkrocksecurity.com" />
-            <Pill label="Privacy / data-subject rights" value="privacy@darkrocksecurity.com" />
+            <Pill label="Contact" value="support@darkrocksecurity.com" />
           </div>
         </section>
 
@@ -187,16 +171,6 @@ function Tile({ label, value, tone, sub }: { label: string; value: string; tone:
       <div style={{ color: colors.textDim, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>{label}</div>
       <div style={{ color: tone, fontSize: 15, fontWeight: 800, marginTop: 4 }}>{value}</div>
       {sub && <div style={{ color: colors.textMuted, fontSize: 10, marginTop: 4, lineHeight: 1.4 }}>{sub}</div>}
-    </div>
-  );
-}
-
-function RoadmapRow({ title, status, tone, note }: { title: string; status: string; tone: string; note: string }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "200px 120px 1fr", gap: 14, padding: "10px 0", borderTop: `1px solid ${colors.panelBorder}`, alignItems: "baseline" }}>
-      <span style={{ color: colors.text, fontSize: 13, fontWeight: 600 }}>{title}</span>
-      <span style={{ color: tone, fontSize: 12, fontWeight: 700 }}>{status}</span>
-      <span style={{ color: colors.textMuted, fontSize: 11, lineHeight: 1.5 }}>{note}</span>
     </div>
   );
 }
