@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth-helpers";
+import { requireUser, getSessionUser } from "@/lib/auth-helpers";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { sendEmail, emailConfigured } from "@/lib/email";
 import { retry } from "@/lib/retry";
@@ -692,6 +692,10 @@ export async function getTenantContext(): Promise<{
   const homeTenantId = session.user!.tenantId;
   const activeTenantId = session.activeTenantId ?? homeTenantId;
 
+  // Fire-and-forget: write a sign-in audit row if this looks like a new session.
+  // Failures are swallowed; never block the dashboard on telemetry.
+  void recordSigninIfFresh();
+
   const [activeTenant, homeTenant] = await Promise.all([
     prisma.tenant.findUnique({
       where: { id: activeTenantId },
@@ -731,10 +735,19 @@ export async function setViewTenant(tenantId: string | null): Promise<{ ok: bool
 
   const cookieStore = await import("next/headers").then((m) => m.cookies()).then((c) => c);
   const COOKIE = "sentry_view_tenant";
+  const actorName = session.user!.fullName ?? session.email;
   if (!tenantId || tenantId === session.user!.tenantId) {
+    const wasImpersonating = !!cookieStore.get(COOKIE)?.value;
     cookieStore.delete(COOKIE);
+    if (wasImpersonating) {
+      await logAccessEvent({
+        tenantId: session.user!.tenantId,
+        action: "tenant_impersonation_ended",
+        actorUserId: session.authId, actorName, actorEmail: session.email,
+      });
+    }
   } else {
-    const target = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+    const target = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } });
     if (!target) return { ok: false, error: "Tenant not found" };
     cookieStore.set(COOKIE, tenantId, {
       httpOnly: true,
@@ -743,6 +756,23 @@ export async function setViewTenant(tenantId: string | null): Promise<{ ok: bool
       path: "/",
       maxAge: 60 * 60 * 8,
     });
+    // Log against BOTH tenants: the home tenant (so the super-admin's home
+    // sees the action), and the target tenant (so the impersonated tenant's
+    // audit log records the event).
+    await Promise.all([
+      logAccessEvent({
+        tenantId: session.user!.tenantId,
+        action: "tenant_impersonation_started",
+        actorUserId: session.authId, actorName, actorEmail: session.email,
+        metadata: { targetTenantId: target.id, targetTenantName: target.name },
+      }),
+      logAccessEvent({
+        tenantId: target.id,
+        action: "tenant_impersonation_started",
+        actorUserId: session.authId, actorName, actorEmail: session.email,
+        metadata: { fromTenantId: session.user!.tenantId },
+      }),
+    ]);
   }
   revalidatePath("/app");
   return { ok: true };
@@ -1021,6 +1051,14 @@ export async function inviteStakeholder(input: InviteStakeholderInput): Promise<
     data: { userId: authUserId, invitedAt: new Date(), inviteStatus: "invited", appRole },
   });
 
+  await logAccessEvent({
+    tenantId,
+    action: "stakeholder_invited",
+    actorUserId: session.authId, actorName: session.user!.fullName ?? session.email, actorEmail: session.email,
+    targetUserId: authUserId, targetEmail: email, targetName: fullName || email,
+    metadata: { stakeholderId: stakeholderIdStr, groupKey: stakeholder.groupKey, appRole, alreadyExisted },
+  });
+
   revalidatePath("/app");
   return { ok: true, userId: authUserId, email, alreadyExisted };
 }
@@ -1102,6 +1140,14 @@ export async function addTeamMemberAction(input: AddTeamMemberInput): Promise<In
       },
     });
   }
+
+  await logAccessEvent({
+    tenantId,
+    action: "user_invited",
+    actorUserId: session.authId, actorName: session.user!.fullName ?? session.email, actorEmail: session.email,
+    targetUserId: authUserId, targetEmail: email, targetName: input.fullName || email,
+    metadata: { role: input.role, alreadyExisted },
+  });
 
   revalidatePath("/app");
   return { ok: true, userId: authUserId, email, alreadyExisted };
@@ -1524,4 +1570,257 @@ export async function discardPolicyDraft(templateId: string): Promise<{ ok: bool
   ]);
   revalidatePath("/app");
   return { ok: true };
+}
+
+// ═══ Access Control: team-member management + audit log ══════════════
+//
+// Adds named-actor row-level audit trail for every meaningful access event.
+// Read by the Access Control module's Activity Log tab.
+
+import type { AccessActionId } from "@/data/access-actions";
+
+export interface TeamMemberDTO {
+  userId: string;
+  email: string;
+  fullName: string | null;
+  company: string | null;
+  jobTitle: string | null;
+  role: "super_admin" | "tenant_admin" | "analyst" | "viewer";
+  appRole: string;
+  active: boolean;
+  invitedAt: string | null;
+  lastSeenAt: string | null;
+  isSelf: boolean;
+}
+
+export interface AccessActivityDTO {
+  id: string;
+  action: AccessActionId;
+  actor: { userId: string; name: string; email: string } | null;
+  target: { userId: string; name: string; email: string } | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/**
+ * Append-only audit-log writer. Called from server actions that touch
+ * access (invite, role change, delete, impersonation, sign-in). All
+ * arguments are captured by value so the log row survives later deletes.
+ */
+async function logAccessEvent(opts: {
+  tenantId: string;
+  action: AccessActionId;
+  actorUserId?: string | null;
+  actorName?: string | null;
+  actorEmail?: string | null;
+  targetUserId?: string | null;
+  targetEmail?: string | null;
+  targetName?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<void> {
+  await prisma.accessActivityLog.create({
+    data: {
+      tenantId: opts.tenantId,
+      action: opts.action,
+      actorUserId: opts.actorUserId ?? null,
+      actorName: opts.actorName ?? null,
+      actorEmail: opts.actorEmail ?? null,
+      targetUserId: opts.targetUserId ?? null,
+      targetEmail: opts.targetEmail ?? null,
+      targetName: opts.targetName ?? null,
+      metadata: (opts.metadata as runtime.InputJsonValue | undefined) ?? undefined,
+    },
+  }).catch((err) => {
+    // Audit failures must never break the originating action.
+    console.warn("logAccessEvent failed:", err);
+  });
+}
+
+export async function listTeamMembers(): Promise<TeamMemberDTO[]> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const rows = await prisma.user.findMany({
+    where: { tenantId },
+    orderBy: [{ active: "desc" }, { fullName: "asc" }, { email: "asc" }],
+  });
+  return rows.map((u): TeamMemberDTO => ({
+    userId: u.id,
+    email: u.email,
+    fullName: u.fullName,
+    company: u.company,
+    jobTitle: u.jobTitle,
+    role: u.role,
+    appRole: u.appRole,
+    active: u.active,
+    invitedAt: u.invitedAt?.toISOString() ?? null,
+    lastSeenAt: u.lastSeenAt?.toISOString() ?? null,
+    isSelf: u.id === session.authId,
+  }));
+}
+
+export interface UpdateUserAccessInput {
+  userId: string;
+  fullName?: string | null;
+  company?: string | null;
+  jobTitle?: string | null;
+  appRole?: "admin" | "manager" | "analyst" | "viewer";
+  active?: boolean;
+}
+
+export async function updateUserAccess(input: UpdateUserAccessInput): Promise<{ ok: boolean; error?: string }> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const callerRole = session.user!.role;
+  if (callerRole !== "tenant_admin" && callerRole !== "super_admin") {
+    return { ok: false, error: "Only tenant admins can modify access." };
+  }
+  const target = await prisma.user.findFirst({ where: { id: input.userId, tenantId } });
+  if (!target) return { ok: false, error: "User not found in this tenant." };
+
+  // Don't let admins lock themselves out by removing their own admin role.
+  if (target.id === session.authId && input.appRole && input.appRole !== "admin" && target.appRole === "admin") {
+    return { ok: false, error: "You can't downgrade your own admin role. Ask another admin to do it." };
+  }
+  if (target.id === session.authId && input.active === false) {
+    return { ok: false, error: "You can't disable your own account." };
+  }
+
+  const data: Record<string, unknown> = {};
+  if (input.fullName !== undefined) data.fullName = input.fullName;
+  if (input.company !== undefined) data.company = input.company;
+  if (input.jobTitle !== undefined) data.jobTitle = input.jobTitle;
+  if (input.active !== undefined) data.active = input.active;
+  if (input.appRole !== undefined) {
+    data.appRole = input.appRole;
+    // Mirror onto the prisma `role` enum so RLS / auth gates stay in sync.
+    data.role = appRoleToPrismaRole(input.appRole);
+  }
+
+  const before = { fullName: target.fullName, company: target.company, jobTitle: target.jobTitle, appRole: target.appRole, active: target.active };
+  await prisma.user.update({ where: { id: target.id }, data });
+
+  const actorName = session.user!.fullName ?? session.user!.email ?? "Unknown";
+  const targetDisplayName = target.fullName ?? target.email;
+
+  // Emit one log line per kind of change.
+  if (input.appRole && input.appRole !== before.appRole) {
+    await logAccessEvent({
+      tenantId, action: "user_role_changed",
+      actorUserId: session.authId, actorName, actorEmail: session.email,
+      targetUserId: target.id, targetEmail: target.email, targetName: targetDisplayName,
+      metadata: { from: before.appRole, to: input.appRole },
+    });
+  }
+  if (input.active !== undefined && input.active !== before.active) {
+    await logAccessEvent({
+      tenantId, action: input.active ? "user_enabled" : "user_disabled",
+      actorUserId: session.authId, actorName, actorEmail: session.email,
+      targetUserId: target.id, targetEmail: target.email, targetName: targetDisplayName,
+    });
+  }
+  const profileChanged =
+    (input.fullName !== undefined && input.fullName !== before.fullName) ||
+    (input.company !== undefined && input.company !== before.company) ||
+    (input.jobTitle !== undefined && input.jobTitle !== before.jobTitle);
+  if (profileChanged) {
+    await logAccessEvent({
+      tenantId, action: "user_profile_updated",
+      actorUserId: session.authId, actorName, actorEmail: session.email,
+      targetUserId: target.id, targetEmail: target.email, targetName: targetDisplayName,
+      metadata: {
+        fullName: input.fullName !== undefined ? { from: before.fullName, to: input.fullName } : undefined,
+        company: input.company !== undefined ? { from: before.company, to: input.company } : undefined,
+        jobTitle: input.jobTitle !== undefined ? { from: before.jobTitle, to: input.jobTitle } : undefined,
+      },
+    });
+  }
+
+  revalidatePath("/app");
+  return { ok: true };
+}
+
+export async function deleteUserAccess(userId: string): Promise<{ ok: boolean; error?: string }> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const callerRole = session.user!.role;
+  if (callerRole !== "tenant_admin" && callerRole !== "super_admin") {
+    return { ok: false, error: "Only tenant admins can remove users." };
+  }
+  if (userId === session.authId) return { ok: false, error: "You can't delete your own account." };
+  const target = await prisma.user.findFirst({ where: { id: userId, tenantId } });
+  if (!target) return { ok: false, error: "User not found in this tenant." };
+
+  // Soft-delete: revoke Supabase auth + flip active=false. Preserves history.
+  try {
+    const supabase = createServiceRoleClient();
+    await supabase.auth.admin.deleteUser(userId).catch(() => undefined);
+  } catch {
+    // Continue even if Supabase delete fails — we still want the row marker.
+  }
+
+  await prisma.user.update({ where: { id: userId }, data: { active: false } });
+
+  await logAccessEvent({
+    tenantId, action: "user_deleted",
+    actorUserId: session.authId, actorName: session.user!.fullName ?? session.email, actorEmail: session.email,
+    targetUserId: target.id, targetEmail: target.email, targetName: target.fullName ?? target.email,
+  });
+
+  revalidatePath("/app");
+  return { ok: true };
+}
+
+export interface ListAccessActivityFilter {
+  action?: AccessActionId;
+  userId?: string; // either actor or target
+  since?: string;  // ISO date
+  limit?: number;
+}
+
+export async function listAccessActivity(filter: ListAccessActivityFilter = {}): Promise<AccessActivityDTO[]> {
+  const session = await requireUser();
+  const tenantId = session.activeTenantId ?? session.user!.tenantId;
+  const limit = Math.min(filter.limit ?? 200, 500);
+  const where: Record<string, unknown> = { tenantId };
+  if (filter.action) where.action = filter.action;
+  if (filter.since) where.createdAt = { gte: new Date(filter.since) };
+  if (filter.userId) {
+    where.OR = [{ actorUserId: filter.userId }, { targetUserId: filter.userId }];
+  }
+  const rows = await prisma.accessActivityLog.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return rows.map((r): AccessActivityDTO => ({
+    id: r.id,
+    action: r.action as AccessActionId,
+    actor: r.actorUserId ? { userId: r.actorUserId, name: r.actorName ?? "", email: r.actorEmail ?? "" } : null,
+    target: r.targetUserId ? { userId: r.targetUserId, name: r.targetName ?? "", email: r.targetEmail ?? "" } : null,
+    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * Called from requireUser() at every server-action / route hit. Records one
+ * sign-in event per session: when lastSeenAt is null, or was last updated
+ * more than SIGNIN_REPORT_WINDOW_MS ago, we treat this as a fresh session.
+ */
+const SIGNIN_REPORT_WINDOW_MS = 30 * 60 * 1000;
+export async function recordSigninIfFresh(): Promise<void> {
+  const session = await getSessionUser();
+  if (!session?.user) return;
+  const u = session.user;
+  const now = new Date();
+  const isFresh = !u.lastSeenAt || now.getTime() - u.lastSeenAt.getTime() > SIGNIN_REPORT_WINDOW_MS;
+  await prisma.user.update({ where: { id: u.id }, data: { lastSeenAt: now } }).catch(() => {});
+  if (isFresh) {
+    await logAccessEvent({
+      tenantId: session.activeTenantId ?? u.tenantId,
+      action: "user_signin",
+      actorUserId: u.id, actorName: u.fullName ?? u.email, actorEmail: u.email,
+      targetUserId: u.id, targetEmail: u.email, targetName: u.fullName ?? u.email,
+    });
+  }
 }
